@@ -9,6 +9,7 @@ const { EpisodeWriter } = require('../dataset/episode_writer');
 const { QueueProducer } = require('../dataset/queue/queue_producer');
 const { logLifecycle, logDecision } = require('../logger/botLogger');
 const { fnv1a } = require('../dataset/util_hash');
+const { deriveGameSeed, derivePlayerSeed, makeRNG } = require('../utils/prng');
 const fs = require('fs');
 const path = require('path');
 
@@ -17,6 +18,10 @@ const BOT_ID = process.env.BOT_ID || process.env.BOT_INDEX || 'bot';
 const EPISODE_DIR = process.env.EPISODE_DIR ? path.resolve(process.env.EPISODE_DIR) : path.join(process.cwd(), 'dataset', 'episodes');
 
 const socket = io(SERVER_URL, { reconnection: true });
+const RUN_SEED = (process.env.RUN_SEED ? parseInt(process.env.RUN_SEED, 10) : (Date.now() >>> 0)) >>> 0;
+let gameSeed = null; // seed dérivé par gameId
+let playerSeed = null; // seed dérivé par player index
+let prng = makeRNG(((process.env.SEED ? parseInt(process.env.SEED, 10) : RUN_SEED)) >>> 0);
 let lastUpdate = null;
 let currentGame = null;
 let writer = null;
@@ -68,8 +73,12 @@ socket.on('beginGame', (info) => {
 	if (!queue) {
 		queue = new QueueProducer({ dir: path.join(process.cwd(), 'dataset', 'queue'), botIndex: process.env.BOT_INDEX || 0 });
 	}
+	// dérive gameSeed et playerSeed (player index = position du socket.id dans users si dispo plus tard)
+	gameSeed = deriveGameSeed(RUN_SEED, currentGame);
+	// playerSeed dérivé plus tard quand on connaît l'index; fallback: combine avec hash du playerId
+	playerSeed = derivePlayerSeed(gameSeed, 0);
 	lastScore = 0;
-	logLifecycle('game_begin', { gameId: currentGame });
+	logLifecycle('game_begin', { gameId: currentGame, runSeed: RUN_SEED, gameSeed, playerSeed });
 });
 
 socket.on('update', (st) => {
@@ -79,6 +88,14 @@ socket.on('update', (st) => {
 
 	const { obs: vector, mask } = encodeObservation(st, socket.id, regions, sanctuaries);
 	const obsHash = fnv1a(vector);
+	// mettre à jour playerSeed si possible (recherche index dans st.users)
+	if (st.users && st.users.length) {
+		const idx = st.users.indexOf(socket.id);
+		if (idx >= 0 && (!playerSeed || playerSeed.__idx !== idx)) {
+			playerSeed = derivePlayerSeed(gameSeed || RUN_SEED, idx);
+			prng = makeRNG(playerSeed);
+		}
+	}
 	const actionObj = pickAction(st, socket.id);
 	let actionTaken = null;
 	let actionIndex = -1;
@@ -94,7 +111,7 @@ socket.on('update', (st) => {
 	// Reward shaping léger: +0.01 * (tour normalisé) quand une action play est posée
 	let shaping = 0;
 	if (actionObj && st.phase === 'play') shaping = (st.turn || 0) / 8 * 0.01;
-	const transition = { obs: vector, mask, action: actionIndex, reward: shaping, done: false, gameId: currentGame, playerId: socket.id, seq: st.stateSeq };
+	const transition = { obs: vector, mask, action: actionIndex, reward: shaping, done: false, gameId: currentGame, playerId: socket.id, seq: st.stateSeq, runSeed: RUN_SEED, gameSeed, playerSeed };
 	writer.add({ ...transition, rawAction: actionTaken, info: { phase: st.phase, obsHash, rawState: st } });
 	if (queue) queue.append(transition);
 });
@@ -119,7 +136,7 @@ const END_CHECK_INTERVAL = setInterval(() => {
 		} else {
 			writer.add({ obs: [], mask: [], action: null, reward: finalReward, done: true, info: { terminal: true } });
 		}
-		const file = writer.close({ finalReward });
+		const file = writer.close({ finalReward, runSeed: RUN_SEED, gameSeed, playerSeed });
 		if (queue) queue.append({ obs: [], mask: [], action: null, reward: finalReward, done: true, gameId: currentGame, playerId: socket.id, terminal: true });
 		if (queue) queue.close();
 		queue = null;

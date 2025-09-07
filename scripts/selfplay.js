@@ -58,6 +58,7 @@ function currentEpisodeDir() {
 }
 
 const startTime = Date.now();
+const RUN_SEED = CFG.seed >>> 0; // seed de base pour cette exécution
 let spawned = 0; // total launched
 let active = new Map(); // pid -> child meta { botIdx,start,seed,lastEp, idleCycles }
 let episodes = 0; // total episodes counted (nouveaux)
@@ -95,12 +96,12 @@ let resolvedCountMode = null;
 function log(...m) { if (!CFG.quiet) console.log('[selfplay]', ...m); }
 
 function spawnBot(botIdx) {
-	const seed = CFG.seed + botIdx;
-	const env = { ...process.env, BOT_INDEX: String(botIdx), SEED: String(seed) };
+	const botSeed = (RUN_SEED + botIdx) >>> 0;
+	const env = { ...process.env, BOT_INDEX: String(botIdx), SEED: String(botSeed), RUN_SEED: String(RUN_SEED) };
 	// On redirige la variable EPISODE_DIR si rotation
 	env.EPISODE_DIR = currentEpisodeDir();
 	const child = spawn('node', ['scripts/bot.js'], { stdio: 'inherit', env });
-	active.set(child.pid, { botIdx, start: Date.now(), seed, lastEp: episodes, idleCycles: 0 });
+	active.set(child.pid, { botIdx, start: Date.now(), seed: botSeed, lastEp: episodes, idleCycles: 0 });
 	child.on('exit', (code) => { active.delete(child.pid); if (episodes < CFG.episodes) schedule(); });
 	spawned++;
 }
@@ -207,7 +208,7 @@ function tick() {
 
 let interval = null;
 function start() {
-	log('config', CFG);
+	log('config', { ...CFG, runSeed: RUN_SEED });
 	schedule();
 	interval = setInterval(tick, 2000);
 }

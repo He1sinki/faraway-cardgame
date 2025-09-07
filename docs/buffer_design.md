@@ -19,7 +19,7 @@ Bots -> QueueProducer (.part -> .ready) -> queue_consumer -> transitions JSONL c
 
 ## Transitions (champ minimal)
 ```
-{"obs":[...],"mask":[...],"action":123,"reward":0.0,"done":false,"gameId":"g1","playerId":"pA","seq":42}
+{"obs":[...],"mask":[...],"action":123,"reward":0.0,"done":false,"gameId":"g1","playerId":"pA","seq":42,"runSeed":123456,"gameSeed":98765,"playerSeed":54321}
 ```
 
 ## Stratégie rotation producteur

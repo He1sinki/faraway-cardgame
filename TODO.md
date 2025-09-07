@@ -159,6 +159,9 @@ Objectif global: développer, entraîner et intégrer une IA capable de se conne
 
 ### 5.3 Gestion seeds
 - Seed global + dérivées par (gameId, playerIdx).
+  - Implémenté: `utils/prng.js`, dérivation `runSeed -> gameSeed -> playerSeed`.
+  - Orchestrateur exporte `RUN_SEED`, bot enrichit chaque transition (`runSeed, gameSeed, playerSeed`).
+  - Doc: `docs/seeding.md`.
 
 ### 5.4 Contrôle qualité data
 - Vérifs périodiques: distribution actions, % invalid moves (doit tendre à 0), longueur moyenne parties.
