@@ -1,0 +1,12 @@
+{
+  "generatedAt": 1757262808808,
+  "games": 0,
+  "gamesCompleted": 0,
+  "globalLatency": {
+    "count": 0
+  },
+  "totalInvalidMoves": 0,
+  "invalidPer100Actions": 0,
+  "totalActions": 0,
+  "perGame": {}
+}
