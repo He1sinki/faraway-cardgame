@@ -31,14 +31,22 @@ class MaskedPolicy(ActorCriticPolicy):
         # Récupération masque si présent
         mask = getattr(self, "_last_action_mask", None)
         if mask is not None:
-            # mask shape: [batch, act_dim] ou [act_dim]
-            if mask.ndim == 1:
-                mask = mask.unsqueeze(0).repeat(
-                    distribution.distribution.logits.size(0), 1
-                )
             logits = distribution.distribution.logits
+            # Normaliser dimension
+            if mask.ndim == 1:
+                mask = mask.unsqueeze(0).repeat(logits.size(0), 1)
+            # Fallback: si ligne totalement 0 -> autoriser dernière action comme NOOP
+            row_invalid = (mask.sum(dim=1) == 0)
+            if row_invalid.any():
+                mask = mask.clone()
+                mask[row_invalid, -1] = 1  # autorise dernière action
+            # Appliquer -1e9 sur actions illégales
             logits = logits.masked_fill(mask == 0, -1e9)
             distribution.distribution.logits = logits
+            # conserver stats rapides
+            self._last_mask_density = float(mask.mean().item())
+        else:
+            self._last_mask_density = None
         actions = distribution.get_actions(deterministic=deterministic)
         log_prob = distribution.log_prob(actions)
         values = self.value_net(latent_vf)
@@ -64,11 +72,13 @@ class MaskedPolicy(ActorCriticPolicy):
         distribution = self._get_action_dist_from_latent(latent_pi)
         mask = getattr(self, "_last_action_mask", None)
         if mask is not None:
-            if mask.ndim == 1:
-                mask = mask.unsqueeze(0).repeat(
-                    distribution.distribution.logits.size(0), 1
-                )
             logits = distribution.distribution.logits
+            if mask.ndim == 1:
+                mask = mask.unsqueeze(0).repeat(logits.size(0), 1)
+            row_invalid = (mask.sum(dim=1) == 0)
+            if row_invalid.any():
+                mask = mask.clone()
+                mask[row_invalid, -1] = 1
             logits = logits.masked_fill(mask == 0, -1e9)
             distribution.distribution.logits = logits
         log_prob = distribution.log_prob(actions)

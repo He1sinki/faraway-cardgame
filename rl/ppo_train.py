@@ -140,6 +140,8 @@ def ppo_update(
     policy_losses = []
     value_losses = []
     entropies = []
+    clip_frac_acc = 0
+    total_samples = 0
     for _ep in range(epochs):
         perm = torch.randperm(N, device=obs.device)
         for i in range(0, N, batch_size):
@@ -168,6 +170,10 @@ def ppo_update(
             loss.backward()
             nn.utils.clip_grad_norm_(model.parameters(), 0.5)
             optimizer.step()
+            with torch.no_grad():
+                clipped = (ratio < (1.0 - clip)) | (ratio > (1.0 + clip))
+                clip_frac_acc += clipped.sum().item()
+                total_samples += ratio.numel()
             policy_losses.append(policy_loss.item())
             value_losses.append(value_loss.item())
             entropies.append(entropy.item())
@@ -180,6 +186,7 @@ def ppo_update(
             .squeeze(1)
         )
         approx_kl = (old_log_probs - new_logp).mean().item()
+    clip_fraction = clip_frac_acc / max(1, total_samples)
     return {
         "approx_kl": approx_kl,
         "entropy": sum(entropies) / max(1, len(entropies)),
@@ -187,6 +194,7 @@ def ppo_update(
         "value_loss": sum(value_losses) / max(1, len(value_losses)),
         "epochs": epochs,
         "batches": len(policy_losses),
+        "clip_fraction": clip_fraction,
     }
 
 
