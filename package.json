@@ -8,7 +8,9 @@
 		"server": "node scripts/server.js",
 		"bot": "node scripts/bot.js",
 		"selfplay": "node scripts/selfplay.js",
-		"train": "bash scripts/train.sh"
+		"train": "bash scripts/train.sh",
+		"logs:compress": "node scripts/compress_logs.js",
+		"logs:agg": "node scripts/aggregate_metrics.js"
 	},
 	"author": "",
 	"license": "ISC",
@@ -21,5 +23,8 @@
 		"fs": "*",
 		"http": "*",
 		"socket.io": "^4.8.1"
+	},
+	"devDependencies": {
+		"pino-pretty": "^11.2.2"
 	}
 }

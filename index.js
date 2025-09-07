@@ -1,4 +1,5 @@
 const app = require('express')();
+const { logEvent } = require('./logger/serverLogger');
 const server = require('http').createServer(app);
 const { Server } = require("socket.io");
 const port = process.env.PORT || 8080;
@@ -444,15 +445,18 @@ io.on('connection', (socket) => {
 		let r = locatePlayer(socket.id);
 		let player = rooms[r].players[socket.id];
 		if (rooms[r].phase != "play") {
+			logEvent({ scope: 'server', action: 'playCard_reject', playerId: socket.id, gameId: r, phase: rooms[r].phase, payload: { card, reason: 'phase' } });
 			return;
 		}
 		if (player.hasPlayed) {
+			logEvent({ scope: 'server', action: 'playCard_reject', playerId: socket.id, gameId: r, phase: rooms[r].phase, payload: { card, reason: 'alreadyPlayed' } });
 			return;
 		}
 		if (player.hand.includes(card)) {
 			player.hand = player.hand.filter((c) => c != card);
 			player.hasPlayed = true;
 			player.playedCards.push(card);
+			logEvent({ scope: 'server', action: 'playCard', playerId: socket.id, gameId: r, phase: rooms[r].phase, payload: { card } });
 			roomUpdate(r);
 		}
 	})
@@ -461,9 +465,11 @@ io.on('connection', (socket) => {
 		let r = locatePlayer(socket.id);
 		let player = rooms[r].players[socket.id];
 		if (rooms[r].phase != "shop") {
+			logEvent({ scope: 'server', action: 'shopChoose_reject', playerId: socket.id, gameId: r, phase: rooms[r].phase, payload: { card, reason: 'phase' } });
 			return;
 		}
 		if (!player.hasToChoose) {
+			logEvent({ scope: 'server', action: 'shopChoose_reject', playerId: socket.id, gameId: r, phase: rooms[r].phase, payload: { card, reason: 'notYourTurn' } });
 			return;
 		}
 		if (rooms[r].shop.includes(card)) {
@@ -480,6 +486,7 @@ io.on('connection', (socket) => {
 					}
 				}
 			}
+			logEvent({ scope: 'server', action: 'shopChooseCard', playerId: socket.id, gameId: r, phase: rooms[r].phase, payload: { card } });
 			roomUpdate(r);
 		}
 	})
@@ -488,9 +495,11 @@ io.on('connection', (socket) => {
 		let r = locatePlayer(socket.id);
 		let player = rooms[r].players[socket.id];
 		if (rooms[r].phase != "sanctuary") {
+			logEvent({ scope: 'server', action: 'sanctuaryChoose_reject', playerId: socket.id, gameId: r, phase: rooms[r].phase, payload: { card, reason: 'phase' } });
 			return;
 		}
 		if (!player.hasToChoose) {
+			logEvent({ scope: 'server', action: 'sanctuaryChoose_reject', playerId: socket.id, gameId: r, phase: rooms[r].phase, payload: { card, reason: 'notEligible' } });
 			return;
 		}
 		if (player.sanctuaryChoose.includes(card)) {
@@ -498,6 +507,7 @@ io.on('connection', (socket) => {
 			player.hasToChoose = false;
 			player.hasPlayed = true;
 			player.playedSanctuaries.push(card);
+			logEvent({ scope: 'server', action: 'sanctuaryChoose', playerId: socket.id, gameId: r, phase: rooms[r].phase, payload: { card } });
 			roomUpdate(r);
 		}
 	})
