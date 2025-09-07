@@ -1,123 +1,74 @@
 <script>
 import socket from "../functions/socket.js";
 import cardDisplay from "./cardDisplay.vue";
-export default{
-    name:"Game",
-    components:{
-        cardDisplay
-    },
-    data(){
-        return{
-            roomName:"",
-            rooms:{},
-            game:{state:false},
-            roomId:"",
-            userProfile:{},
-            opponent:"",
 
-            titleState:"Both players play",
-            detailsState:"You have to choose a card to play",
+export default {
+    name: "Game",
+    components: { cardDisplay },
+    data(){
+        return {
+            game: { state: false },
+            roomId: "",
+            userProfile: {},
+            titleState: "Players play",
+            detailsState: "Choose a card to play",
+            opponentsBaseline: {}
+        }
+    },
+    computed:{
+        otherPlayers(){
+            if(!this.game || !this.game.users) return [];
+            return this.game.users.filter(u => u !== socket.id);
         }
     },
     mounted(){
         this.roomId = this.$route.params.id;
-        console.log("Game ID:", this.$route.params.id);
-        console.log(socket.id)
-        console.log(socket)
         if(socket.id == null){
             socket.connect();
-            socket.on("wellConnected", ()=>{
-                this.joinRoom(this.roomId);
-            });
+            socket.on("wellConnected", ()=> this.joinRoom(this.roomId));
         }
-        socket.on("roomFull", ()=>{
-            alert("Room is full")
-            this.$router.push("/");
-        });
-        socket.on("roomNotFound", ()=>{
-            alert("Room not found")
-            this.$router.push("/");
-        });
-        socket.on("roomStarted", ()=>{
-            alert("Room has already started")
-            this.$router.push("/");
-        });
-
-        socket.on("update", (game)=>{
-            this.updateGame(game)
-        });
-        socket.on("roomJoined", (game)=>{
-            this.game = game;
-        })
+        socket.on("roomFull", ()=>{ alert("Room is full"); this.$router.push("/"); });
+        socket.on("roomNotFound", ()=>{ alert("Room not found"); this.$router.push("/"); });
+        socket.on("roomStarted", ()=>{ alert("Room has already started"); this.$router.push("/"); });
+        socket.on("update", g => this.updateGame(g));
+        socket.on("roomJoined", g => this.game = g);
     },
     methods:{
-        joinRoom(room){
-            socket.emit("joinRoom", room);
-        },
+        joinRoom(room){ socket.emit("joinRoom", room); },
+        startGame(){ socket.emit('startGame', this.roomId); },
         updateGame(game){
-            console.log("Game updated", game)
+            const prevPhase = this.game.phase;
             this.game = game;
-
-            this.userProfile = this.game.players[socket.id];
-            this.opponent = this.game.users.find(id => id != socket.id);
-
+            this.userProfile = (this.game.players || {})[socket.id] || {};
+            if(this.game.phase === 'play' && prevPhase !== 'play'){
+                const b = {};
+                for(const uid of this.otherPlayers){ b[uid] = this.game.players[uid].playedCards.length; }
+                this.opponentsBaseline = b;
+            }
             switch(this.game.phase){
-                case "play":
-                    this.titleState="Both players play";
-                    this.detailsState="You have to choose a card to play";
+                case 'play':
+                    this.titleState = 'Players play';
+                    this.detailsState = this.userProfile.hasPlayed? 'Waiting others' : 'Choose a card to play';
                     break;
-                case "shop":
-                    if(this.userProfile.hasToChoose){
-                        this.titleState="You have to choose a card";
-                        this.detailsState="You have to choose a card";
-                    }else{
-                        this.titleState="Waiting for your opponent";
-                        this.detailsState="Your opponent chooses a card";
-                    }
+                case 'shop':
+                    this.titleState = this.userProfile.hasToChoose? 'Choose a card' : 'Shop phase';
+                    this.detailsState = this.userProfile.hasToChoose? 'Pick one card' : 'Waiting others';
                     break;
-                case "sanctuary":
-                    if(this.userProfile.hasToChoose){
-                        this.titleState="You have to choose a sanctuary";
-                        this.detailsState="You have to choose a sanctuary";
-                    }else{
-                        this.titleState="Waiting for your opponent";
-                        this.detailsState="Your opponent chooses a sanctuary";
-                    }
+                case 'sanctuary':
+                    this.titleState = this.userProfile.hasToChoose? 'Choose a sanctuary' : 'Sanctuary phase';
+                    this.detailsState = this.userProfile.hasToChoose? 'Pick one sanctuary' : 'Waiting others';
                     break;
-                case "end":
-                    this.titleState="The game is over";
-                    this.detailsState="";
-                    console.log(this.game)
+                case 'end':
+                    this.titleState = 'Game over';
+                    this.detailsState = '';
                     break;
             }
         },
-        leaveRoom(){
-            socket.emit("leaveRoom");
-            this.$router.push("/");
-        },
-        // method that copies the url of the page
-        copyUrl(){
-            navigator.clipboard.writeText(window.location.href);
-        },
-
-        cardClickedHandle(card){
-            if(this.game.phase == "play"){
-                socket.emit("playCard", card);
-            }
-        },
-        shopClickedHandle(card){
-            console.log(card)
-            console.log(this.game.phase)
-            console.log(this.userProfile)
-            if(this.game.phase == "shop" && this.userProfile.hasToChoose){
-                socket.emit("shopChooseCard", card);
-            }
-        },
-        sanctuaryChooseClick(card){
-            if(this.game.phase == "sanctuary" && this.userProfile.hasToChoose){
-                socket.emit("sanctuaryChoose", card);
-            }
-        }
+        leaveRoom(){ socket.emit("leaveRoom"); this.$router.push("/"); },
+        copyUrl(){ navigator.clipboard.writeText(window.location.href); },
+        cardClickedHandle(card){ if(this.game.phase==='play' && !this.userProfile.hasPlayed){ socket.emit('playCard', card); } },
+        shopClickedHandle(card){ if(this.game.phase==='shop' && this.userProfile.hasToChoose){ socket.emit('shopChooseCard', card); } },
+        sanctuaryChooseClick(card){ if(this.game.phase==='sanctuary' && this.userProfile.hasToChoose){ socket.emit('sanctuaryChoose', card); } }
     }
 }
 </script>
@@ -125,73 +76,69 @@ export default{
 <template>
     <div class="mainDiv">
         <div class="waitingScreen" v-if="!game.state">
-            <h1>Waiting for another player...</h1>
-            
+            <h1>Waiting for players ({{ (game.users && game.users.length) || 1 }}/{{ game.maxPlayers || 6 }})...</h1>
             <div class="room">
                 <h2>Room: {{ roomId }}</h2>
                 <img class="smallImg" @click="copyUrl" src="../../clipboard.svg" />
             </div>
-
+            <div class="btn" v-if="game.users && game.users.length>=2" @click="startGame">Start game</div>
             <div class="btn" @click="leaveRoom">Leave room</div>
         </div>
         <div class="gameDiv" v-else>
-            <!-- Opponent -->
-            <div class="playerHand">
-                <!-- Placed cards -->
-                <cardDisplay cardsNumber="8" :cards="game.players[opponent].playedCards" :fill="true"/>
-                <!-- Opponent cards -->
-                <!-- USER CARDS-->
-                <div class="sideCards">
-                    <cardDisplay cardsNumber="3" :cards="game.players[opponent].hand" :flipped="true" :locked="[0,1,2]"/>
-                    <cardDisplay cardsNumber="3" :cards="game.players[opponent].playedSanctuaries" :isSanctuary="true"/>
+            <!-- AUTRES JOUEURS -->
+            <div class="othersWrapper">
+                <div class="playerMini" v-for="uid in otherPlayers" :key="uid">
+                    <div class="miniTitle">Player {{ game.users.indexOf(uid)+1 }}</div>
+                        <cardDisplay cardsNumber="8" :cards="game.players[uid].playedCards" :fill="true" />
+                    <div class="miniSide">
+                        <cardDisplay cardsNumber="3" :cards="game.players[uid].hand" :flipped="true" :locked="[0,1,2]" />
+                        <cardDisplay cardsNumber="3" :cards="game.players[uid].playedSanctuaries" :isSanctuary="true" />
+                    </div>
+                    <div class="statusTag" :class="{'toChoose':game.players[uid].hasToChoose, 'done':game.players[uid].hasPlayed}">
+                        {{ game.players[uid].hasToChoose? 'Choosing' : (game.players[uid].hasPlayed? 'Done':'Playing') }}
+                    </div>
                 </div>
             </div>
-            <!-- Shop -->
-            <div class="centerDiv" v-if="game.phase != 'end'">
-                <cardDisplay cardsNumber="3" :cards="userProfile.sanctuaryChoose" :fill="false" @cardClicked="sanctuaryChooseClick" :isSanctuary="true" v-if="game.phase == 'sanctuary' && userProfile.hasToChoose"/>
+
+            <!-- PHASE CENTRALE -->
+            <div class="centerDiv" v-if="game.phase!=='end'">
+                <cardDisplay cardsNumber="3" :cards="userProfile.sanctuaryChoose" :fill="false" @cardClicked="sanctuaryChooseClick" :isSanctuary="true" v-if="game.phase==='sanctuary' && userProfile.hasToChoose" />
                 <div class="gameState" v-else>
                     <div id="titleState">{{ titleState }}</div>
                     <div id="detailsState">{{ detailsState }}</div>
                 </div>
-                <cardDisplay cardsNumber="4" :cards="game.shop" :fill="false" @cardClicked="shopClickedHandle"/>
+                <cardDisplay :cardsNumber="Math.max(4, ((game.users && game.users.length) || 2)+1)" :cards="game.shop" :fill="false" @cardClicked="shopClickedHandle" />
             </div>
+
             <div class="centerDiv" v-else>
-                <!-- display the score as a horizontal table with the score of each round (player 1 : game.score[0].round / player 2 : game.score[1].round), and at last the total (game.score[].total) -->
-                <table class="scoreTable">
+                <table class="scoreTable" v-if="game.score && game.score.length">
                     <thead>
                         <tr>
-                            <th></th>
-                            <th v-for="(round, index) in game.score[0].round" :key="index">{{index!=8?'Round '+ (index + 1):'Sanctuaries' }}</th>
+                            <th>Player</th>
+                            <th v-for="(round, rIdx) in game.score[0].round" :key="'h'+rIdx">{{ rIdx!=8 ? 'Round '+ (rIdx+1) : 'Sanctuaries' }}</th>
                             <th>Total</th>
                         </tr>
                     </thead>
                     <tbody>
-                        <tr>
-                            <td>Player 1</td>
-                            <td v-for="(round, index) in game.score[0].round" :key="index">{{ round }}</td>
-                            <td>{{ game.score[0].total }}</td>
-                        </tr>
-                        <tr>
-                            <td>Player 2</td>
-                            <td v-for="(round, index) in game.score[1].round" :key="index">{{ round }}</td>
-                            <td>{{ game.score[1].total }}</td>
+                        <tr v-for="(uid, idx) in game.users" :key="'s'+uid">
+                            <td>Player {{ idx+1 }} <span v-if="Array.isArray(game.winner) && game.winner.includes(uid)">🏆</span></td>
+                            <td v-for="(round, rIdx) in game.score[idx].round" :key="'r'+idx+'-'+rIdx">{{ round }}</td>
+                            <td>{{ game.score[idx].total }}</td>
                         </tr>
                     </tbody>
                 </table>
-                <!-- <div class="btn" @click="leaveRoom">Leave room</div> -->
             </div>
+
+            <!-- JOUEUR LOCAL -->
             <div class="playerHand">
-                <!-- Placed cards -->
-                <cardDisplay cardsNumber="8" :cards="userProfile.playedCards" :fill="true"/>
-                <!-- USER CARDS-->
+                <cardDisplay cardsNumber="8" :cards="userProfile.playedCards" :fill="true" />
                 <div class="sideCards">
-                    <cardDisplay cardsNumber="3" :cards="userProfile.hand" @cardClicked="cardClickedHandle"/>
-                    <cardDisplay cardsNumber="3" :cards="userProfile.playedSanctuaries" :isSanctuary="true"/>
+                    <cardDisplay cardsNumber="3" :cards="userProfile.hand" @cardClicked="cardClickedHandle" />
+                    <cardDisplay cardsNumber="3" :cards="userProfile.playedSanctuaries" :isSanctuary="true" />
                 </div>
             </div>
         </div>
     </div>
-
 </template>
 
 <style scoped>
@@ -260,6 +207,35 @@ export default{
     max-height:36vh;
     
 }
+.othersWrapper{display:flex;flex-wrap:wrap;gap:10px;width:100%;justify-content:center;}
+.playerMini{border:2px solid var(--main);border-radius:12px;padding:10px;width:300px;display:flex;flex-direction:column;gap:8px;position:relative;}
+.miniSide{display:flex;gap:8px;}
+.miniTitle{font-weight:bold;}
+.statusTag{position:absolute;top:6px;right:8px;font-size:0.7em;padding:4px 6px;border-radius:8px;background:var(--grey);color:#fff;}
+.statusTag.toChoose{background:#d97706;}
+.statusTag.done{background:#16a34a;}
+.othersWrapper{
+    display:flex;
+    flex-wrap:wrap;
+    gap:10px;
+    width:100%;
+    justify-content:center;
+}
+.playerMini{
+    border:2px solid var(--main);
+    border-radius:12px;
+    padding:10px;
+    width:300px;
+    display:flex;
+    flex-direction:column;
+    gap:8px;
+    position:relative;
+}
+.miniSide{display:flex;gap:8px;}
+.miniTitle{font-weight:bold;}
+.statusTag{position:absolute;top:6px;right:8px;font-size:0.7em;padding:4px 6px;border-radius:8px;background:var(--grey);color:#fff;}
+.statusTag.toChoose{background:#d97706;}
+.statusTag.done{background:#16a34a;}
 /* responsive make it a column */
 @media (max-width: 800px){
     .playerHand{

@@ -13,6 +13,11 @@ export default{
             type: Boolean,
             default: false
         },
+        // Permet de retourner uniquement certaines cartes (indexes) face cachée
+        flippedIndexes: {
+            type: Array,
+            default: () => []
+        },
         isSanctuary:{
             type:Boolean,
             default:false
@@ -33,7 +38,7 @@ export default{
 <template>
     <div class="cardDisplay" :class="{'sanctuaryDisplayHead':isSanctuary}">
         <div class="cardGrid" :style="{'width': cardsNumber*11 + 'vw', }" :class="{'sanctuaryDisplay':isSanctuary, 'scroll':isSanctuary}">
-            <Card v-for="(card, i) in cards" :id="card" :isSanctuary="isSanctuary" :isFlipped="flipped" :isLocked="locked.includes(i)" @cardClicked="cardClickedHandle"/>
+            <Card v-for="(card, i) in cards" :id="card" :isSanctuary="isSanctuary" :isFlipped="flipped || flippedIndexes.includes(i)" :isLocked="locked.includes(i)" @cardClicked="cardClickedHandle"/>
             <Card v-if="fill" v-for="i in cardsNumber-cards.length" :isPlaceholder="true" :placeHolderNumber="cardsNumber-cards.length-i+1"/>
             <div v-if="cards.length == 0 && isSanctuary" class="sanctuaryText">No sanctuaries, yet!</div>
         </div>
