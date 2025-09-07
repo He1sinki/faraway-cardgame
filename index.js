@@ -35,6 +35,7 @@ function buildRoomState(roomId) {
 }
 
 function beginGame(room) {
+	logEvent({ scope: 'server', action: 'beginGame_init', gameId: room, payload: { users: rooms[room].users.length } });
 	io.to(room).emit('beginGame', { protocolVersion: PROTOCOL_VERSION, serverTime: Date.now() });
 
 	rooms[room].turn = 0;
@@ -67,11 +68,13 @@ function beginGame(room) {
 
 	setTimeout(() => {
 		rooms[room].state = true;
+		logEvent({ scope: 'server', action: 'beginGame_started', gameId: room });
 		io.to(room).emit('update', buildRoomState(room));
 	}, 300); // délai réduit
 }
 
 function goToShop(room) {
+	const prevPhase = rooms[room].phase;
 	if (rooms[room].turn == 7) {
 		// Dernier tour terminé -> fin de partie
 		for (const uid of rooms[room].users) {
@@ -83,6 +86,7 @@ function goToShop(room) {
 	}
 	resetHasPlayed(room);
 	rooms[room].phase = "shop";
+	logEvent({ scope: 'server', action: 'phase_transition', gameId: room, payload: { from: prevPhase, to: 'shop', turn: rooms[room].turn } });
 
 	// Ordre de choix magasin selon la dernière carte jouée (valeur croissante)
 	const order = [...rooms[room].users].sort((a, b) => {
@@ -118,7 +122,9 @@ function countMaps(player) {
 
 function goToSanctuary(room) {
 	resetHasPlayed(room);
+	const prevPhase = rooms[room].phase;
 	rooms[room].phase = "sanctuary";
+	logEvent({ scope: 'server', action: 'phase_transition', gameId: room, payload: { from: prevPhase, to: 'sanctuary', turn: rooms[room].turn } });
 
 	for (const uid of rooms[room].users) {
 		const p = rooms[room].players[uid];
@@ -140,6 +146,7 @@ function goToSanctuary(room) {
 
 function finishGame(room) {
 	rooms[room].phase = "end";
+	logEvent({ scope: 'server', action: 'phase_transition', gameId: room, payload: { to: 'end', turn: rooms[room].turn } });
 	const scores = [];
 	let max = -Infinity;
 	for (const uid of rooms[room].users) {
@@ -306,6 +313,7 @@ function roomUpdate(room) {
 					goToShop(room);
 				}
 			}
+			logEvent({ scope: 'server', action: 'state_update', gameId: room, phase: 'play', payload: { turn: rooms[room].turn } });
 			io.to(room).emit('update', buildRoomState(room));
 			break;
 		}
@@ -314,6 +322,7 @@ function roomUpdate(room) {
 			if (allPicked) {
 				rooms[room].phase = "play";
 				rooms[room].turn++;
+				logEvent({ scope: 'server', action: 'phase_transition', gameId: room, payload: { from: 'shop', to: 'play', turn: rooms[room].turn } });
 				if (rooms[room].turn == 8) {
 					finishGame(room);
 					io.to(room).emit('update', buildRoomState(room));
@@ -322,6 +331,7 @@ function roomUpdate(room) {
 				resetHasPlayed(room);
 				generateShop(room);
 			}
+			logEvent({ scope: 'server', action: 'state_update', gameId: room, phase: 'shop', payload: { turn: rooms[room].turn } });
 			io.to(room).emit('update', buildRoomState(room));
 			break;
 		}
@@ -330,6 +340,7 @@ function roomUpdate(room) {
 			if (allDone) {
 				goToShop(room);
 			}
+			logEvent({ scope: 'server', action: 'state_update', gameId: room, phase: 'sanctuary', payload: { turn: rooms[room].turn } });
 			io.to(room).emit('update', buildRoomState(room));
 			break;
 		}
@@ -389,6 +400,7 @@ function locatePlayer(socketId) {
 io.on('connection', (socket) => {
 	socket.emit("wellConnected");
 	socket.emit("rooms", rooms);
+	logEvent({ scope: 'server', action: 'socket_connected', playerId: socket.id });
 	socket.on("getRooms", () => {
 		socket.emit("rooms", rooms);
 	});
@@ -396,6 +408,7 @@ io.on('connection', (socket) => {
 	socket.on('disconnect', function () {
 		//find all rooms where the socket.id is in, and removes him (if the room is empty delete it)
 		leaveRoom(socket)
+		logEvent({ scope: 'server', action: 'socket_disconnected', playerId: socket.id });
 	});
 
 	socket.on("leaveRoom", () => {
@@ -408,24 +421,29 @@ io.on('connection', (socket) => {
 		socket.emit('joinedRoom', id);
 		rooms[id] = { users: [socket.id], state: false, maxPlayers: 6 };
 		console.log(rooms)
+		logEvent({ scope: 'server', action: 'room_created', gameId: id, playerId: socket.id });
 	});
 
 	socket.on("joinRoom", (msg) => {
 		if (rooms[msg]) {
 			if (rooms[msg].users.length >= (rooms[msg].maxPlayers || 6)) {
 				socket.emit("roomFull");
+				logEvent({ scope: 'server', action: 'room_join_reject', gameId: msg, playerId: socket.id, payload: { reason: 'full' } });
 				return;
 			}
 			if (rooms[msg].state) {
 				socket.emit("roomStarted");
+				logEvent({ scope: 'server', action: 'room_join_reject', gameId: msg, playerId: socket.id, payload: { reason: 'started' } });
 				return;
 			}
 			socket.join(msg);
 			rooms[msg].users.push(socket.id);
 			socket.emit("roomJoined", rooms[msg]);
 			io.to(msg).emit('update', buildRoomState(msg));
+			logEvent({ scope: 'server', action: 'room_joined', gameId: msg, playerId: socket.id, payload: { users: rooms[msg].users.length } });
 		} else {
 			socket.emit("roomNotFound");
+			logEvent({ scope: 'server', action: 'room_join_reject', gameId: msg, playerId: socket.id, payload: { reason: 'notFound' } });
 		}
 	});
 
@@ -435,8 +453,10 @@ io.on('connection', (socket) => {
 		if (rooms[roomId].state) return; // déjà démarré
 		if (rooms[roomId].users.length < 2) {
 			socket.emit('notEnoughPlayers');
+			logEvent({ scope: 'server', action: 'startGame_reject', gameId: roomId, playerId: socket.id, payload: { reason: 'notEnoughPlayers' } });
 			return;
 		}
+		logEvent({ scope: 'server', action: 'startGame_request', gameId: roomId, playerId: socket.id });
 		beginGame(roomId);
 	});
 
