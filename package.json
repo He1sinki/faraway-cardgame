@@ -10,7 +10,9 @@
 		"selfplay": "node scripts/selfplay.js",
 		"train": "bash scripts/train.sh",
 		"logs:compress": "node scripts/compress_logs.js",
-		"logs:agg": "node scripts/aggregate_metrics.js"
+		"logs:agg": "node scripts/aggregate_metrics.js",
+		"dataset:build": "node scripts/build_dataset.js",
+		"selfplay:collect": "BOTS=4 node scripts/selfplay.js && npm run dataset:build"
 	},
 	"author": "",
 	"license": "ISC",
@@ -23,7 +25,8 @@
 		"fs": "*",
 		"http": "*",
 		"pino": "^9.9.4",
-		"socket.io": "^4.8.1"
+		"socket.io": "^4.8.1",
+		"socket.io-client": "^4.8.1"
 	},
 	"devDependencies": {
 		"pino-pretty": "^11.3.0"
