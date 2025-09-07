@@ -124,6 +124,7 @@ def ppo_update(
     clip: float,
     vf_coef: float,
     ent_coef: float,
+    vf_clip: float | None,
     batch_size: int,
     epochs: int,
 ) -> Dict[str, Any]:
@@ -153,7 +154,14 @@ def ppo_update(
             surr2 = torch.clamp(ratio, 1.0 - clip, 1.0 + clip) * advs[idx]
             policy_loss = -torch.min(surr1, surr2).mean()
             v_target = returns[idx]
-            value_loss = (values - v_target).pow(2).mean()
+            if vf_clip is not None:
+                # clip value prediction around target within +/- vf_clip
+                v_clipped = v_target + (values - v_target).clamp(-vf_clip, vf_clip)
+                value_loss_unclipped = (values - v_target).pow(2)
+                value_loss_clipped = (v_clipped - v_target).pow(2)
+                value_loss = torch.max(value_loss_unclipped, value_loss_clipped).mean()
+            else:
+                value_loss = (values - v_target).pow(2).mean()
             entropy = -(log_probs_all * torch.exp(log_probs_all)).sum(-1).mean()
             loss = policy_loss + vf_coef * value_loss - ent_coef * entropy
             optimizer.zero_grad()
@@ -239,6 +247,13 @@ def main():
     clip = float(cfg.get("clip_range", 0.2))
     ent_coef = float(cfg.get("entropy_coef", 0.01))
     vf_coef = float(cfg.get("value_coef", 0.5))
+    vf_clip_cfg = cfg.get("vf_clip")
+    vf_clip_range = cfg.get("vf_clip_range")
+    vf_clip = None
+    if isinstance(vf_clip_cfg, (int, float)):
+        vf_clip = float(vf_clip_cfg)
+    elif isinstance(vf_clip_range, (int, float)):
+        vf_clip = float(vf_clip_range)
     seed = cfg.get("seed")
     if seed is not None:
         set_seed(int(seed))
@@ -264,6 +279,7 @@ def main():
         ent_coef=ent_coef,
         batch_size=batch_size,
         epochs=n_epochs,
+        vf_clip=vf_clip,
     )
     ts = int(time.time())
     policy_path = os.path.join(RUNS_DIR, f"ppo_policy_{ts}.pt")

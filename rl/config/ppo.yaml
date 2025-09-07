@@ -22,3 +22,7 @@ pad_act_dim: 256 # dimension masque/padding binaire
 action_masking: true
 tensorboard_log: "runs/tb"  # dossier TB pour SB3
 save_interval_steps: 50000  # (futur) intervalle sauvegarde auto
+updates: 1                  # (custom) nombre de passes PPO successives sur le même buffer
+lr_schedule: none           # none | linear (linear decay sur updates)
+minibatch_size: 256         # override batch_size pour sous-lot (si différent)
+vf_clip_range: null         # si non null et vf_clip == null: clip absolu value delta (custom)
