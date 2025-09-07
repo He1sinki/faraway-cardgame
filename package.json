@@ -33,8 +33,8 @@
 		"test:encode": "node rl/test_encode_observation.js",
 		"env:test": "node rl/test_env_basic.js",
 		"export:npz": "node scripts/export_npz.js",
-		"test:mask": "node rl/test_mask_consistency.js"
-		,"test:mask:py": "scripts/python.sh rl/tests/test_mask_fallback.py"
+		"test:mask": "node rl/test_mask_consistency.js",
+		"test:mask:py": "scripts/python.sh rl/tests/test_mask_fallback.py"
 	},
 	"author": "",
 	"license": "ISC",

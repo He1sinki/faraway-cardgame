@@ -247,9 +247,14 @@ def try_resume_optimizer(optimizer: optim.Optimizer, latest_policy_path: str | N
     return 0
 
 
+def linear_lr(base_lr: float, step: int, total_steps: int) -> float:
+    frac = 1.0 - (step / max(1, total_steps))
+    return base_lr * frac
+
+
 def main():
     cfg = load_config(CONFIG_PATH)
-    lr = float(cfg.get("learning_rate", 3e-4))
+    base_lr = float(cfg.get("learning_rate", 3e-4))
     batch_size = int(cfg.get("batch_size", 256))
     n_epochs = int(cfg.get("n_epochs", cfg.get("epochs", 3)))
     clip = float(cfg.get("clip_range", 0.2))
@@ -271,24 +276,54 @@ def main():
     resumed_flag, latest_policy = try_resume(model)
     old_model = PolicyValueNet(obs_dim).to(DEVICE)
     old_model.load_state_dict(model.state_dict())
-    optimizer = optim.Adam(model.parameters(), lr=lr)
+    lr_schedule_mode = cfg.get("lr_schedule", "none")
+    total_updates = int(cfg.get("updates", 1))
+    optimizer = optim.Adam(model.parameters(), lr=base_lr)
     try_resume_optimizer(optimizer, latest_policy)
-    metrics = ppo_update(
-        model,
-        old_model,
-        optimizer,
-        obs,
-        actions,
-        returns,
-        advs,
-        masks,
-        clip=clip,
-        vf_coef=vf_coef,
-        ent_coef=ent_coef,
-        batch_size=batch_size,
-        epochs=n_epochs,
-        vf_clip=vf_clip,
-    )
+    early_stop = bool(cfg.get("early_stop", True))
+    target_kl = float(cfg.get("target_kl", 0.1))
+    min_entropy = float(cfg.get("min_entropy", 0.05))
+    lr_kl_factor = float(cfg.get("lr_kl_factor", 0.5))
+    patience_updates = int(cfg.get("patience_updates", 0))
+    history = []
+    for update_idx in range(total_updates):
+        # scheduler
+        if lr_schedule_mode == "linear":
+            new_lr = linear_lr(base_lr, update_idx, total_updates)
+            for pg in optimizer.param_groups:
+                pg["lr"] = new_lr
+        metrics = ppo_update(
+            model,
+            old_model,
+            optimizer,
+            obs,
+            actions,
+            returns,
+            advs,
+            masks,
+            clip=clip,
+            vf_coef=vf_coef,
+            ent_coef=ent_coef,
+            batch_size=batch_size,
+            epochs=n_epochs,
+            vf_clip=vf_clip,
+        )
+        history.append(metrics)
+        # early stop checks
+        if early_stop:
+            kl = metrics["approx_kl"]
+            ent = metrics["entropy"]
+            if kl > target_kl:
+                # reduce LR once then maybe stop
+                for pg in optimizer.param_groups:
+                    pg["lr"] *= lr_kl_factor
+                if update_idx >= total_updates - 1 or patience_updates == 0:
+                    print(f"[ppo] early stop: KL {kl:.4f} > {target_kl}")
+                    break
+                patience_updates -= 1
+            if ent < min_entropy:
+                print(f"[ppo] early stop: entropy {ent:.4f} < {min_entropy}")
+                break
     ts = int(time.time())
     policy_path = os.path.join(RUNS_DIR, f"ppo_policy_{ts}.pt")
     torch.save(model.state_dict(), policy_path)
@@ -299,15 +334,20 @@ def main():
         "logical_act_dim": LOGICAL_ACT_DIM,
         "pad_dim": PAD_DIM,
         "metrics": metrics,
+        "history": history,
         "count": obs.size(0),
         "config_used": {
-            "learning_rate": lr,
+            "learning_rate": base_lr,
             "batch_size": batch_size,
             "n_epochs": n_epochs,
             "clip_range": clip,
             "entropy_coef": ent_coef,
             "value_coef": vf_coef,
             "seed": seed,
+            "lr_schedule": lr_schedule_mode,
+            "updates": total_updates,
+            "target_kl": target_kl,
+            "min_entropy": min_entropy,
         },
         "resumed": bool(resumed_flag),
         "timestamp": ts,

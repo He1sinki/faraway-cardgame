@@ -36,7 +36,7 @@ class MaskedPolicy(ActorCriticPolicy):
             if mask.ndim == 1:
                 mask = mask.unsqueeze(0).repeat(logits.size(0), 1)
             # Fallback: si ligne totalement 0 -> autoriser dernière action comme NOOP
-            row_invalid = (mask.sum(dim=1) == 0)
+            row_invalid = mask.sum(dim=1) == 0
             if row_invalid.any():
                 mask = mask.clone()
                 mask[row_invalid, -1] = 1  # autorise dernière action
@@ -75,7 +75,7 @@ class MaskedPolicy(ActorCriticPolicy):
             logits = distribution.distribution.logits
             if mask.ndim == 1:
                 mask = mask.unsqueeze(0).repeat(logits.size(0), 1)
-            row_invalid = (mask.sum(dim=1) == 0)
+            row_invalid = mask.sum(dim=1) == 0
             if row_invalid.any():
                 mask = mask.clone()
                 mask[row_invalid, -1] = 1
