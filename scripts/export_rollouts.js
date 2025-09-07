@@ -50,6 +50,7 @@ for (const f of files) {
 			obs: obsB64,
 			mask: maskB64,
 			action: step.action == null ? -1 : step.action,
+			rawAction: step.rawAction ?? null,
 			logProb: -1.0,
 			value: 0.0,
 			reward: step.reward || 0,

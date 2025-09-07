@@ -13,7 +13,8 @@ ROLL_DIR = os.path.join("data", "rollouts", "processed_adv")
 RUNS_DIR = "runs"
 os.makedirs(RUNS_DIR, exist_ok=True)
 
-ACT_DIM = 256
+LOGICAL_ACT_DIM = 208  # actions réelles (2R+S+NOOP)
+PAD_DIM = 256  # masque/stockage
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
@@ -24,11 +25,11 @@ def decode_obs(b64: str) -> List[float]:
 
 def decode_mask(b64: str) -> List[int]:
     raw = base64.b64decode(b64)
-    return list(raw[:ACT_DIM])
+    return list(raw[:PAD_DIM])
 
 
 class PolicyValueNet(nn.Module):
-    def __init__(self, obs_dim: int, act_dim: int = ACT_DIM):
+    def __init__(self, obs_dim: int, act_dim: int = LOGICAL_ACT_DIM):
         super().__init__()
         self.shared = nn.Sequential(
             nn.Linear(obs_dim, 256), nn.ReLU(), nn.Linear(256, 256), nn.ReLU()
@@ -120,8 +121,10 @@ def ppo_update(
         for i in range(0, N, batch_size):
             idx = perm[i : i + batch_size]
             logits, values = model(obs[idx])
-            # TODO Phase 3.7: appliquer masque: logits[masks[idx]==0] = -1e9 (broadcast)
-            log_probs_all = torch.log_softmax(logits, dim=-1)
+            # Appliquer masque (seules premières LOGICAL_ACT_DIM colonnes concernées)
+            sub_mask = masks[idx][:, :LOGICAL_ACT_DIM]
+            masked_logits = logits.masked_fill(sub_mask == 0, -1e9)
+            log_probs_all = torch.log_softmax(masked_logits, dim=-1)
             log_probs = log_probs_all.gather(1, actions[idx].unsqueeze(1)).squeeze(1)
             ratio = torch.exp(log_probs - old_log_probs[idx])
             surr1 = ratio * advs[idx]
@@ -141,15 +144,16 @@ def ppo_update(
     # compute diagnostics
     with torch.no_grad():
         logits, values = model(obs)
+        masked_logits = logits.masked_fill(masks[:, :LOGICAL_ACT_DIM] == 0, -1e9)
         logp = (
-            torch.log_softmax(logits, dim=-1).gather(1, actions.unsqueeze(1)).squeeze(1)
+            torch.log_softmax(masked_logits, dim=-1)
+            .gather(1, actions.unsqueeze(1))
+            .squeeze(1)
         )
         approx_kl = (old_log_probs - logp).mean().item()
+        probs = torch.softmax(masked_logits, dim=-1)
         entropy_final = (
-            -(torch.log_softmax(logits, dim=-1) * torch.softmax(logits, dim=-1))
-            .sum(-1)
-            .mean()
-            .item()
+            -(torch.log_softmax(masked_logits, dim=-1) * probs).sum(-1).mean().item()
         )
     return {"approx_kl": approx_kl, "entropy": entropy_final}
 
@@ -187,7 +191,8 @@ def main():
         json.dump(
             {
                 "obs_dim": obs_dim,
-                "act_dim": ACT_DIM,
+                "logical_act_dim": LOGICAL_ACT_DIM,
+                "pad_dim": PAD_DIM,
                 "metrics": metrics,
                 "count": obs.size(0),
             },

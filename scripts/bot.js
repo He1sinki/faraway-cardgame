@@ -1,8 +1,10 @@
 #!/usr/bin/env node
-// Bot RL Phase 3.1 - collecte de trajectoires basiques (random policy)
+// Bot RL Phase 4.3 - collecte avec encodeur structuré (random policy)
 
 const { io } = require('socket.io-client');
-const { featurize } = require('../dataset/featurize');
+const { encodeObservation } = require('../rl/encode_observation');
+const { regions, sanctuaries } = require('../class/cards.js');
+const { playIndex, shopIndex, sanctIndex, NOOP_INDEX, R } = require('../rl/action_space');
 const { EpisodeWriter } = require('../dataset/episode_writer');
 const { logLifecycle, logDecision } = require('../logger/botLogger');
 const { fnv1a } = require('../dataset/util_hash');
@@ -23,12 +25,20 @@ function pickAction(state, playerId) {
 	const player = state.players?.[playerId];
 	if (!player) return null;
 	if (state.phase === 'play') {
-		// Random card from hand
-		if (player.hand.length) return { type: 'playCard', card: player.hand[Math.floor(Math.random() * player.hand.length)] };
+		if (player.hand.length) {
+			const card = player.hand[Math.floor(Math.random() * player.hand.length)];
+			return { type: 'playCard', card, actionIndex: playIndex(card) };
+		}
 	} else if (state.phase === 'shop' && player.hasToChoose) {
-		if (state.shop?.length) return { type: 'shopChooseCard', card: state.shop[Math.floor(Math.random() * state.shop.length)] };
+		if (state.shop?.length) {
+			const card = state.shop[Math.floor(Math.random() * state.shop.length)];
+			return { type: 'shopChooseCard', card, actionIndex: shopIndex(card) };
+		}
 	} else if (state.phase === 'sanctuary' && player.hasToChoose) {
-		if (player.sanctuaryChoose?.length) return { type: 'sanctuaryChoose', card: player.sanctuaryChoose[0] };
+		if (player.sanctuaryChoose?.length) {
+			const card = player.sanctuaryChoose[0];
+			return { type: 'sanctuaryChoose', card, actionIndex: sanctIndex(card) };
+		}
 	}
 	return null;
 }
@@ -62,12 +72,14 @@ socket.on('update', (st) => {
 	socket.emit('updateAck', { stateSeq: st.stateSeq, clientTime: Date.now() });
 	if (!writer) return; // game not initialized fully yet
 
-	const { vector, mask } = featurize(st, socket.id);
+	const { obs: vector, mask } = encodeObservation(st, socket.id, regions, sanctuaries);
 	const obsHash = fnv1a(vector);
 	const actionObj = pickAction(st, socket.id);
 	let actionTaken = null;
+	let actionIndex = -1;
 	if (actionObj) {
 		actionTaken = actionObj.card;
+		actionIndex = actionObj.actionIndex != null ? actionObj.actionIndex : actionTaken;
 		if (actionObj.type === 'playCard') socket.emit('playCard', actionObj.card);
 		if (actionObj.type === 'shopChooseCard') socket.emit('shopChooseCard', actionObj.card);
 		if (actionObj.type === 'sanctuaryChoose') socket.emit('sanctuaryChoose', actionObj.card);
@@ -77,7 +89,7 @@ socket.on('update', (st) => {
 	// Reward shaping léger: +0.01 * (tour normalisé) quand une action play est posée
 	let shaping = 0;
 	if (actionObj && st.phase === 'play') shaping = (st.turn || 0) / 8 * 0.01;
-	writer.add({ obs: vector, mask, action: actionTaken, reward: shaping, done: false, info: { seq: st.stateSeq, phase: st.phase, obsHash, rawState: st } });
+	writer.add({ obs: vector, mask, action: actionIndex, rawAction: actionTaken, reward: shaping, done: false, info: { seq: st.stateSeq, phase: st.phase, obsHash, rawState: st } });
 });
 
 socket.on('disconnect', () => logLifecycle('disconnected', {}));
