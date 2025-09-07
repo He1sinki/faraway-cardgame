@@ -6,6 +6,7 @@ const { encodeObservation } = require('../rl/encode_observation');
 const { regions, sanctuaries } = require('../class/cards.js');
 const { playIndex, shopIndex, sanctIndex, NOOP_INDEX, R } = require('../rl/action_space');
 const { EpisodeWriter } = require('../dataset/episode_writer');
+const { QueueProducer } = require('../dataset/queue/queue_producer');
 const { logLifecycle, logDecision } = require('../logger/botLogger');
 const { fnv1a } = require('../dataset/util_hash');
 const fs = require('fs');
@@ -19,6 +20,7 @@ const socket = io(SERVER_URL, { reconnection: true });
 let lastUpdate = null;
 let currentGame = null;
 let writer = null;
+let queue = null;
 let lastScore = 0; // pour reward différentiel (simplifié)
 
 function pickAction(state, playerId) {
@@ -63,6 +65,9 @@ socket.on('roomJoined', (state) => {
 socket.on('beginGame', (info) => {
 	currentGame = info.gameId || currentGame || 'unknown';
 	writer = new EpisodeWriter({ dir: EPISODE_DIR, gameId: currentGame, playerId: socket.id });
+	if (!queue) {
+		queue = new QueueProducer({ dir: path.join(process.cwd(), 'dataset', 'queue'), botIndex: process.env.BOT_INDEX || 0 });
+	}
 	lastScore = 0;
 	logLifecycle('game_begin', { gameId: currentGame });
 });
@@ -89,7 +94,9 @@ socket.on('update', (st) => {
 	// Reward shaping léger: +0.01 * (tour normalisé) quand une action play est posée
 	let shaping = 0;
 	if (actionObj && st.phase === 'play') shaping = (st.turn || 0) / 8 * 0.01;
-	writer.add({ obs: vector, mask, action: actionIndex, rawAction: actionTaken, reward: shaping, done: false, info: { seq: st.stateSeq, phase: st.phase, obsHash, rawState: st } });
+	const transition = { obs: vector, mask, action: actionIndex, reward: shaping, done: false, gameId: currentGame, playerId: socket.id, seq: st.stateSeq };
+	writer.add({ ...transition, rawAction: actionTaken, info: { phase: st.phase, obsHash, rawState: st } });
+	if (queue) queue.append(transition);
 });
 
 socket.on('disconnect', () => logLifecycle('disconnected', {}));
@@ -113,6 +120,9 @@ const END_CHECK_INTERVAL = setInterval(() => {
 			writer.add({ obs: [], mask: [], action: null, reward: finalReward, done: true, info: { terminal: true } });
 		}
 		const file = writer.close({ finalReward });
+		if (queue) queue.append({ obs: [], mask: [], action: null, reward: finalReward, done: true, gameId: currentGame, playerId: socket.id, terminal: true });
+		if (queue) queue.close();
+		queue = null;
 		logLifecycle('episode_closed', { file, finalReward });
 		writer = null; currentGame = null; lastUpdate = null; lastScore = 0;
 	}
