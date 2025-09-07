@@ -18,7 +18,8 @@
 		"dataset:normalize": "node scripts/normalize_dataset.js",
 		"episodes:index": "node scripts/build_replay_index.js",
 		"selfplay:collect": "BOTS=4 TARGET_EPISODES=20 node scripts/selfplay.js && npm run dataset:build && npm run dataset:dedup && npm run dataset:normalize && npm run dataset:split && npm run episodes:compress && npm run episodes:index",
-		"ppo": "python rl/ppo_train.py"
+		"ppo": "python rl/ppo_train.py",
+		"test:encode": "node rl/test_encode_observation.js"
 	},
 	"author": "",
 	"license": "ISC",

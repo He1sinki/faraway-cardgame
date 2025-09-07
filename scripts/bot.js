@@ -77,7 +77,7 @@ socket.on('update', (st) => {
 	// Reward shaping léger: +0.01 * (tour normalisé) quand une action play est posée
 	let shaping = 0;
 	if (actionObj && st.phase === 'play') shaping = (st.turn || 0) / 8 * 0.01;
-	writer.add({ obs: vector, mask, action: actionTaken, reward: shaping, done: false, info: { seq: st.stateSeq, phase: st.phase, obsHash } });
+	writer.add({ obs: vector, mask, action: actionTaken, reward: shaping, done: false, info: { seq: st.stateSeq, phase: st.phase, obsHash, rawState: st } });
 });
 
 socket.on('disconnect', () => logLifecycle('disconnected', {}));

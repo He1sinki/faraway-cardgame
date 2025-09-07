@@ -6,6 +6,13 @@
 
 const fs = require('fs');
 const path = require('path');
+const USE_ENCODE = process.env.USE_ENCODE_OBS === '1';
+let encodeObservation = null; let regions = null, sanctuaries = null;
+if (USE_ENCODE) {
+	({ encodeObservation } = require('../rl/encode_observation'));
+	({ regions, sanctuaries } = require('../class/cards.js'));
+	console.log('[export_rollouts] using new encodeObservation');
+}
 
 const EP_DIR = path.join(process.cwd(), 'dataset', 'episodes');
 const OUT_DIR = path.join(process.cwd(), 'data', 'rollouts');
@@ -27,9 +34,18 @@ for (const f of files) {
 	if (fs.existsSync(outName)) continue; // skip already exported
 	const stream = fs.createWriteStream(outName, 'utf8');
 	for (const step of data.steps || []) {
-		if (!Array.isArray(step.obs)) continue;
-		const obsB64 = toBase64Float32(step.obs);
-		const maskB64 = toBase64Uint8(buildMask(step));
+		let obsArr = step.obs;
+		let maskArr = buildMask(step);
+		if (USE_ENCODE && step.info?.rawState) {
+			try {
+				const enc = encodeObservation(step.info.rawState, data.playerId, regions, sanctuaries);
+				obsArr = enc.obs;
+				maskArr = enc.mask;
+			} catch (e) { /* fallback legacy */ }
+		}
+		if (!Array.isArray(obsArr)) continue;
+		const obsB64 = toBase64Float32(obsArr);
+		const maskB64 = toBase64Uint8(maskArr);
 		const line = {
 			obs: obsB64,
 			mask: maskB64,
