@@ -4,3 +4,6 @@ json/tokens.json
 .DS_Store
 logs/
 dataset/
+.venv/
+data/
+runs/

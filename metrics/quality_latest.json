@@ -1,76 +1,76 @@
 {
-  "generatedAt": 1757269661273,
-  "filesAnalyzed": 6,
-  "totalTransitions": 1513,
-  "episodesApprox": 24,
-  "avgEpisodeLen": 63.041666666666664,
-  "actionDistinct": 182,
-  "entropy": 6.9589243873781195,
+  "generatedAt": 1757270147578,
+  "filesAnalyzed": 7,
+  "totalTransitions": 5347,
+  "episodesApprox": 74,
+  "avgEpisodeLen": 72.25675675675676,
+  "actionDistinct": 206,
+  "entropy": 7.260888111240629,
   "topActions": [
     {
-      "action": 59,
-      "count": 23,
-      "pct": 2.46
-    },
-    {
-      "action": 42,
-      "count": 22,
-      "pct": 2.35
-    },
-    {
-      "action": 26,
-      "count": 20,
-      "pct": 2.14
-    },
-    {
-      "action": 41,
-      "count": 20,
-      "pct": 2.14
-    },
-    {
-      "action": 51,
-      "count": 20,
-      "pct": 2.14
+      "action": 24,
+      "count": 48,
+      "pct": 1.47
     },
     {
       "action": 35,
-      "count": 18,
-      "pct": 1.93
+      "count": 48,
+      "pct": 1.47
+    },
+    {
+      "action": 9,
+      "count": 47,
+      "pct": 1.44
+    },
+    {
+      "action": 59,
+      "count": 47,
+      "pct": 1.44
+    },
+    {
+      "action": 1,
+      "count": 46,
+      "pct": 1.41
+    },
+    {
+      "action": 21,
+      "count": 45,
+      "pct": 1.38
+    },
+    {
+      "action": 38,
+      "count": 44,
+      "pct": 1.35
     },
     {
       "action": 45,
-      "count": 18,
-      "pct": 1.93
+      "count": 44,
+      "pct": 1.35
     },
     {
-      "action": 64,
-      "count": 18,
-      "pct": 1.93
+      "action": 73,
+      "count": 44,
+      "pct": 1.35
     },
     {
-      "action": 29,
-      "count": 17,
-      "pct": 1.82
-    },
-    {
-      "action": 56,
-      "count": 17,
-      "pct": 1.82
+      "action": 41,
+      "count": 42,
+      "pct": 1.29
     }
   ],
-  "nullActionPct": 38.2,
+  "nullActionPct": 38.99,
   "reward": {
-    "mean": 0.0043,
-    "std": 1.5223,
-    "min": -16.75,
+    "mean": -0.0006,
+    "std": 1.2685,
+    "min": -24.75,
     "max": 30,
-    "terminalSum": 4,
-    "shapingSum": 2.52
+    "terminalSum": -12.55,
+    "shapingSum": 9.31
   },
   "seeds": {
-    "gameSeeds": 6,
-    "playerSeeds": 20,
-    "games": 7
+    "gameSeeds": 19,
+    "playerSeeds": 70,
+    "games": 20
   },
   "backlogReadyFiles": 0
 }

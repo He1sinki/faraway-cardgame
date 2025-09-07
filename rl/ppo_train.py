@@ -72,10 +72,13 @@ def load_buffer(limit_files: int = 200) -> Tuple[RolloutBuffer, int]:
     files = sorted(glob.glob(os.path.join(ROLL_DIR, "episode_*.jsonl")))[-limit_files:]
     buf = RolloutBuffer()
     obs_dim = None
+    skipped_mismatch = 0
+    total = 0
     for f in files:
         for line in open(f, "r"):
             if not line.strip():
                 continue
+            total += 1
             o = json.loads(line)
             act = int(o["action"])
             if act < 0:
@@ -83,10 +86,17 @@ def load_buffer(limit_files: int = 200) -> Tuple[RolloutBuffer, int]:
             obs_vec = decode_obs(o["obs"])
             if obs_dim is None:
                 obs_dim = len(obs_vec)
+            if len(obs_vec) != obs_dim:
+                skipped_mismatch += 1
+                continue
             ret = float(o.get("return", o["reward"]))
             adv = float(o.get("advantage", ret))
             mask = decode_mask(o["mask"])
             buf.add(obs_vec, act, ret, adv, mask)
+    if skipped_mismatch:
+        print(
+            f"[ppo] skipped {skipped_mismatch} transitions with mismatched obs dim out of {total}"
+        )
     if obs_dim is None:
         raise SystemExit("No data found for PPO.")
     return buf, obs_dim

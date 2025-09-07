@@ -1,16 +1,16 @@
 # Data Quality Report
 
-Generated: 2025-09-07T18:27:41.273Z
+Generated: 2025-09-07T18:35:47.578Z
 
-Transitions: 1513 | Episodes≈ 24 | AvgEpLen≈ 63.0
+Transitions: 5347 | Episodes≈ 74 | AvgEpLen≈ 72.3
 
-Distinct actions: 182 | Entropy: 6.959 | NullAction%: 38.2
+Distinct actions: 206 | Entropy: 7.261 | NullAction%: 38.99
 
-Reward mean: 0.0043 std: 1.5223 min: -16.75 max: 30
+Reward mean: -0.0006 std: 1.2685 min: -24.75 max: 30
 
-TerminalRewardSum: 4 | ShapingSum: 2.52
+TerminalRewardSum: -12.55 | ShapingSum: 9.31
 
-Seeds: gameSeeds=6 playerSeeds=20 games=7
+Seeds: gameSeeds=19 playerSeeds=70 games=20
 
 Queue backlog (.ready files): 0
 
@@ -19,13 +19,13 @@ Queue backlog (.ready files): 0
 
 | action | count | pct |
 |--------|-------|-----|
-| 59 | 23 | 2.46% |
-| 42 | 22 | 2.35% |
-| 26 | 20 | 2.14% |
-| 41 | 20 | 2.14% |
-| 51 | 20 | 2.14% |
-| 35 | 18 | 1.93% |
-| 45 | 18 | 1.93% |
-| 64 | 18 | 1.93% |
-| 29 | 17 | 1.82% |
-| 56 | 17 | 1.82% |
+| 24 | 48 | 1.47% |
+| 35 | 48 | 1.47% |
+| 9 | 47 | 1.44% |
+| 59 | 47 | 1.44% |
+| 1 | 46 | 1.41% |
+| 21 | 45 | 1.38% |
+| 38 | 44 | 1.35% |
+| 45 | 44 | 1.35% |
+| 73 | 44 | 1.35% |
+| 41 | 42 | 1.29% |
