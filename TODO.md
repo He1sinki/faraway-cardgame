@@ -183,6 +183,7 @@ Objectif global: développer, entraîner et intégrer une IA capable de se conne
 
 ## Phase 6 – Boucle d’Entraînement RL (PPO recommandé)
 ### 6.1 Choix lib
+- Décision documentée: voir `docs/rl_lib_choice.md` (Phase 6.1 complétée).
 - Python: `stable-baselines3` PPO ou impl custom si besoin de masques (adapter).
 - JS option: `tfjs` (moins mature pour PPO multi-env avec masques).
 

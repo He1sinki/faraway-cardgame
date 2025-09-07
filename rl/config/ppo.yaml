@@ -1,5 +1,8 @@
-# PPO Configuration (Phase 1.3 Draft)
-policy: "MlpPolicy"
+﻿# PPO Configuration (Phase 6.1)
+# Séparation entre impl custom offline & SB3.
+lib: "custom"        # custom | sb3
+policy: "MlpPolicy"  # SB3 policy class si lib=sb3
+sb3_policy: "MaskedPolicy"  # policy custom (définie dans sb3_masked_policy.py)
 learning_rate: 0.0003
 gamma: 0.995
 gae_lambda: 0.95
@@ -7,11 +10,15 @@ clip_range: 0.2
 entropy_coef: 0.01
 value_coef: 0.5
 max_grad_norm: 0.5
-n_steps: 2048
+n_steps: 2048         # (SB3) rollout length par worker (futur online)
 batch_size: 256
 n_epochs: 3
 vf_clip: null
 normalize_advantage: true
 seed: 12345
-obs_dim: 0   # à remplir après encodeur
-act_dim: 208 # 2R + S + 1 = 208 (R=77, S=53)
+obs_dim: 0     # à remplir dynamiquement (custom)
+act_dim: 208   # 2R + S + NOOP
+pad_act_dim: 256 # dimension masque/padding binaire
+action_masking: true
+tensorboard_log: "runs/tb"  # dossier TB pour SB3
+save_interval_steps: 50000  # (futur) intervalle sauvegarde auto
