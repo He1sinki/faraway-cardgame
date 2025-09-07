@@ -16,6 +16,8 @@ class NetworkEnv {
 		this.serverUrl = opts.serverUrl || process.env.SERVER_URL || 'http://localhost:8080';
 		this.timeoutMs = opts.timeoutMs || 5000; // attente step
 		this.joinRetry = opts.joinRetry || 5;
+		this.minPlayers = opts.minPlayers || 2; // nouveau: autoriser démarrage solo (minPlayers=1)
+		this.fillWithDummies = opts.fillWithDummies || 0; // nombre de joueurs fantômes à créer si besoin
 		this.socket = null;
 		this.playerId = null;
 		this.roomId = null;
@@ -48,13 +50,35 @@ class NetworkEnv {
 
 	_handleRoomJoined(state) {
 		this.roomId = state.roomId;
-		if (state.users.length >= 2) setTimeout(() => this.socket.emit('startGame', this.roomId), 300);
+		// Démarrage auto si nombre de joueurs suffisant OU mode solo
+		if (state.users.length >= this.minPlayers) {
+			setTimeout(() => this.socket.emit('startGame', this.roomId), 300);
+		} else if (this.minPlayers === 1) {
+			// mode solo: tenter démarrage même seul après petit délai (si serveur l'autorise)
+			setTimeout(() => this.socket.emit('startGame', this.roomId), 800);
+		} else if (this.fillWithDummies > 0) {
+			// Créer des sockets fantômes pour atteindre minPlayers
+			const needed = Math.max(0, this.minPlayers - state.users.length);
+			for (let i = 0; i < Math.min(needed, this.fillWithDummies); i++) this._spawnDummy();
+		}
+	}
+
+	_spawnDummy() {
+		const sock = io(this.serverUrl, { reconnection: false, forceNew: true });
+		sock.on('connect', () => {
+			if (this.roomId) sock.emit('joinRoom', this.roomId);
+		});
+		sock.on('roomJoined', (st) => {
+			if (st.users.length >= this.minPlayers) setTimeout(() => this.socket.emit('startGame', this.roomId), 200);
+		});
+		sock.on('disconnect', () => { });
 	}
 
 	_handleUpdate(st) {
 		this.socket.emit('updateAck', { stateSeq: st.stateSeq, clientTime: Date.now() });
 		this.lastState = st;
 		this.stateSeq = st.stateSeq;
+		if (!this._pendingBegin && st.phase !== undefined) this._pendingBegin = true; // fallback si pas d'event beginGame
 		if (this._awaitingStep) this._awaitingStep = false;
 	}
 
@@ -71,10 +95,14 @@ class NetworkEnv {
 		await this._connect();
 		// demander rooms pour trigger join/create
 		this.socket.emit('getRooms');
-		// Attendre beginGame + premier update
+		// Attendre beginGame (ou un update qui indique déjà un état de partie si serveur ne fait pas d'event distinct)
 		const start = Date.now();
 		while (!this._pendingBegin) {
-			if (Date.now() - start > this.timeoutMs) throw new Error('Timeout attente beginGame');
+			if (this.lastState && this.lastState.phase !== undefined) break; // fallback: on a déjà un state
+			if (Date.now() - start > this.timeoutMs) {
+				if (this.minPlayers === 1 && this.lastState) break; // tolère en solo
+				throw new Error('Timeout attente beginGame');
+			}
 			await sleep(50);
 		}
 		await this._waitForGameStart();
@@ -117,7 +145,11 @@ class NetworkEnv {
 		const beforeSeq = this.stateSeq;
 		if (netAct) this.socket.emit(netAct.type, netAct.card);
 		// shaping
-		if (netAct && this.lastState.phase === 'play') this.episodeReward += (this.lastState.turn || 0) / 8 * this._shapingCoeff;
+		let deltaReward = 0;
+		if (netAct && this.lastState.phase === 'play') {
+			deltaReward += (this.lastState.turn || 0) / 8 * this._shapingCoeff;
+			this.episodeReward += deltaReward;
+		}
 		// attendre next update ou terminal
 		const start = Date.now();
 		this._awaitingStep = true;
@@ -131,13 +163,14 @@ class NetworkEnv {
 		}
 		const done = this._isTerminal(this.lastState);
 		if (done) {
-			this.episodeReward += this._finalReward();
+			const finalR = this._finalReward();
+			deltaReward += finalR;
+			this.episodeReward += finalR;
 			this.finished = true;
 		}
 		const { obs, mask } = encodeObservation(this.lastState, this.playerId, regions, sanctuaries);
-		const stepReward = this.episodeReward; // reward cumul (simple); could return incremental diff
-		const info = { stateSeq: this.stateSeq, phase: this.lastState.phase, obsHash: sha1(obs), stalled: this.stateSeq === beforeSeq };
-		return { obs, mask, reward: stepReward, done, info };
+		const info = { stateSeq: this.stateSeq, phase: this.lastState.phase, obsHash: sha1(obs), stalled: this.stateSeq === beforeSeq, episodeReturn: this.episodeReward };
+		return { obs, mask, reward: deltaReward, done, info };
 	}
 }
 

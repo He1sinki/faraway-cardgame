@@ -4,6 +4,7 @@ const { logEvent } = require('./logger/serverLogger');
 const server = require('http').createServer(app);
 const { Server } = require('socket.io');
 const port = process.env.PORT || 8080;
+const ALLOW_SOLO = process.env.ALLOW_SOLO === '1';
 
 const { regions, sanctuaries } = require('./class/cards.js');
 
@@ -81,7 +82,33 @@ function countPoints(player) { let totalScore = 0; const roundScores = []; const
 
 function checkQuest(total, quest) { for (const k in quest) if (total[k] < quest[k]) return false; return true; }
 
-function roomUpdate(room) { switch (rooms[room].phase) { case 'play': { const allPlayed = rooms[room].users.every(uid => rooms[room].players[uid].hasPlayed); if (allPlayed) { rooms[room].turn !== 0 ? goToSanctuary(room) : goToShop(room); return; } logEvent({ scope: 'server', action: 'state_update', gameId: room, phase: 'play', payload: { turn: rooms[room].turn } }); sendUpdate(room); break; } case 'shop': { const allPicked = rooms[room].users.every(uid => rooms[room].players[uid].hasPlayed); if (allPicked) { rooms[room].phase = 'play'; rooms[room].turn++; logEvent({ scope: 'server', action: 'phase_transition', gameId: room, payload: { from: 'shop', to: 'play', turn: rooms[room].turn } }); if (rooms[room].turn === 8) { finishGame(room); sendUpdate(room); return; } resetHasPlayed(room); generateShop(room); } logEvent({ scope: 'server', action: 'state_update', gameId: room, phase: 'shop', payload: { turn: rooms[room].turn } }); sendUpdate(room); break; } case 'sanctuary': { const allDone = rooms[room].users.every(uid => rooms[room].players[uid].hasPlayed); if (allDone) { goToShop(room); return; } logEvent({ scope: 'server', action: 'state_update', gameId: room, phase: 'sanctuary', payload: { turn: rooms[room].turn } }); sendUpdate(room); break; } } }
+function roomUpdate(room) {
+	const rm = rooms[room];
+	if (!rm || !rm.players) return; // pas encore initialisé
+	// Vérifier que tous les users ont une entrée joueur
+	for (const uid of rm.users) if (!rm.players[uid]) return; // attendre init complet
+	switch (rm.phase) {
+		case 'play': {
+			const allPlayed = rm.users.every(uid => rm.players[uid] && rm.players[uid].hasPlayed);
+			if (allPlayed) { rm.turn !== 0 ? goToSanctuary(room) : goToShop(room); return; }
+			logEvent({ scope: 'server', action: 'state_update', gameId: room, phase: 'play', payload: { turn: rm.turn } });
+			sendUpdate(room); break;
+		}
+		case 'shop': {
+			const allPicked = rm.users.every(uid => rm.players[uid] && rm.players[uid].hasPlayed);
+			if (allPicked) { rm.phase = 'play'; rm.turn++; logEvent({ scope: 'server', action: 'phase_transition', gameId: room, payload: { from: 'shop', to: 'play', turn: rm.turn } }); if (rm.turn === 8) { finishGame(room); sendUpdate(room); return; } resetHasPlayed(room); generateShop(room); }
+			logEvent({ scope: 'server', action: 'state_update', gameId: room, phase: 'shop', payload: { turn: rm.turn } });
+			sendUpdate(room); break;
+		}
+		case 'sanctuary': {
+			const allDone = rm.users.every(uid => rm.players[uid] && rm.players[uid].hasPlayed);
+			if (allDone) { goToShop(room); return; }
+			logEvent({ scope: 'server', action: 'state_update', gameId: room, phase: 'sanctuary', payload: { turn: rm.turn } });
+			sendUpdate(room); break;
+		}
+		default: break;
+	}
+}
 
 function leaveRoom(socket) { for (const room in rooms) { if (rooms[room].users.includes(socket.id)) { rooms[room].users = rooms[room].users.filter(id => id !== socket.id); if (!rooms[room].users.length) delete rooms[room]; } } }
 function locatePlayer(socketId) { for (const room in rooms) if (rooms[room].users.includes(socketId)) return room; }
@@ -93,8 +120,8 @@ io.on('connection', socket => {
 	socket.on('leaveRoom', () => leaveRoom(socket));
 	socket.on('createRoom', () => { const id = generateId(); socket.join(id); socket.emit('joinedRoom', id); rooms[id] = { users: [socket.id], state: false, maxPlayers: 6 }; logEvent({ scope: 'server', action: 'room_created', gameId: id, playerId: socket.id }); });
 	socket.on('joinRoom', msg => { if (rooms[msg]) { if (rooms[msg].users.length >= (rooms[msg].maxPlayers || 6)) { socket.emit('roomFull'); logEvent({ scope: 'server', action: 'room_join_reject', gameId: msg, playerId: socket.id, payload: { reason: 'full' } }); return; } if (rooms[msg].state) { socket.emit('roomStarted'); logEvent({ scope: 'server', action: 'room_join_reject', gameId: msg, playerId: socket.id, payload: { reason: 'started' } }); return; } socket.join(msg); rooms[msg].users.push(socket.id); socket.emit('roomJoined', { roomId: msg, ...rooms[msg] }); io.to(msg).emit('update', buildRoomState(msg)); logEvent({ scope: 'server', action: 'room_joined', gameId: msg, playerId: socket.id, payload: { users: rooms[msg].users.length } }); } else { socket.emit('roomNotFound'); logEvent({ scope: 'server', action: 'room_join_reject', gameId: msg, playerId: socket.id, payload: { reason: 'notFound' } }); } });
-	socket.on('startGame', roomId => { if (!rooms[roomId]) return; if (rooms[roomId].state) return; if (rooms[roomId].users.length < 2) { socket.emit('notEnoughPlayers'); logEvent({ scope: 'server', action: 'startGame_reject', gameId: roomId, playerId: socket.id, payload: { reason: 'notEnoughPlayers' } }); return; } logEvent({ scope: 'server', action: 'startGame_request', gameId: roomId, playerId: socket.id }); beginGame(roomId); });
-	socket.on('playCard', card => { const r = locatePlayer(socket.id); if (!r) return; const player = rooms[r].players[socket.id]; if (rooms[r].phase !== 'play') { logEvent({ scope: 'server', action: 'playCard_reject', playerId: socket.id, gameId: r, phase: rooms[r].phase, payload: { card, reason: 'phase' } }); rooms[r]._invalidMoves[socket.id] = (rooms[r]._invalidMoves[socket.id] || 0) + 1; return; } if (player.hasPlayed) { logEvent({ scope: 'server', action: 'playCard_reject', playerId: socket.id, gameId: r, phase: rooms[r].phase, payload: { card, reason: 'alreadyPlayed' } }); rooms[r]._invalidMoves[socket.id] = (rooms[r]._invalidMoves[socket.id] || 0) + 1; return; } if (player.hand.includes(card)) { player.hand = player.hand.filter(c => c !== card); player.hasPlayed = true; player.playedCards.push(card); logEvent({ scope: 'server', action: 'playCard', playerId: socket.id, gameId: r, phase: rooms[r].phase, payload: { card } }); roomUpdate(r); } });
+	socket.on('startGame', roomId => { if (!rooms[roomId]) return; if (rooms[roomId].state) return; if (rooms[roomId].users.length < 2 && !ALLOW_SOLO) { socket.emit('notEnoughPlayers'); logEvent({ scope: 'server', action: 'startGame_reject', gameId: roomId, playerId: socket.id, payload: { reason: 'notEnoughPlayers' } }); return; } logEvent({ scope: 'server', action: 'startGame_request', gameId: roomId, playerId: socket.id, payload: { allowSolo: ALLOW_SOLO } }); beginGame(roomId); });
+	socket.on('playCard', card => { const r = locatePlayer(socket.id); if (!r || !rooms[r].players || !rooms[r].players[socket.id]) return; const player = rooms[r].players[socket.id]; if (rooms[r].phase !== 'play') { logEvent({ scope: 'server', action: 'playCard_reject', playerId: socket.id, gameId: r, phase: rooms[r].phase, payload: { card, reason: 'phase' } }); rooms[r]._invalidMoves[socket.id] = (rooms[r]._invalidMoves[socket.id] || 0) + 1; return; } if (player.hasPlayed) { logEvent({ scope: 'server', action: 'playCard_reject', playerId: socket.id, gameId: r, phase: rooms[r].phase, payload: { card, reason: 'alreadyPlayed' } }); rooms[r]._invalidMoves[socket.id] = (rooms[r]._invalidMoves[socket.id] || 0) + 1; return; } if (Array.isArray(player.hand) && player.hand.includes(card)) { player.hand = player.hand.filter(c => c !== card); player.hasPlayed = true; player.playedCards.push(card); logEvent({ scope: 'server', action: 'playCard', playerId: socket.id, gameId: r, phase: rooms[r].phase, payload: { card } }); roomUpdate(r); } });
 	socket.on('shopChooseCard', card => { const r = locatePlayer(socket.id); if (!r) return; const player = rooms[r].players[socket.id]; if (rooms[r].phase !== 'shop') { logEvent({ scope: 'server', action: 'shopChoose_reject', playerId: socket.id, gameId: r, phase: rooms[r].phase, payload: { card, reason: 'phase' } }); rooms[r]._invalidMoves[socket.id] = (rooms[r]._invalidMoves[socket.id] || 0) + 1; return; } if (!player.hasToChoose) { logEvent({ scope: 'server', action: 'shopChoose_reject', playerId: socket.id, gameId: r, phase: rooms[r].phase, payload: { card, reason: 'notYourTurn' } }); rooms[r]._invalidMoves[socket.id] = (rooms[r]._invalidMoves[socket.id] || 0) + 1; return; } if (rooms[r].shop.includes(card)) { player.hand.push(card); player.hasToChoose = false; player.hasPlayed = true; rooms[r].shop = rooms[r].shop.filter(c => c !== card); if (rooms[r].shopOrder) { for (const uid of rooms[r].shopOrder) { if (!rooms[r].players[uid].hasPlayed) { rooms[r].players[uid].hasToChoose = true; break; } } } logEvent({ scope: 'server', action: 'shopChooseCard', playerId: socket.id, gameId: r, phase: rooms[r].phase, payload: { card } }); roomUpdate(r); } });
 	socket.on('sanctuaryChoose', card => { const r = locatePlayer(socket.id); if (!r) return; const player = rooms[r].players[socket.id]; if (rooms[r].phase !== 'sanctuary') { logEvent({ scope: 'server', action: 'sanctuaryChoose_reject', playerId: socket.id, gameId: r, phase: rooms[r].phase, payload: { card, reason: 'phase' } }); rooms[r]._invalidMoves[socket.id] = (rooms[r]._invalidMoves[socket.id] || 0) + 1; return; } if (!player.hasToChoose) { logEvent({ scope: 'server', action: 'sanctuaryChoose_reject', playerId: socket.id, gameId: r, phase: rooms[r].phase, payload: { card, reason: 'notEligible' } }); rooms[r]._invalidMoves[socket.id] = (rooms[r]._invalidMoves[socket.id] || 0) + 1; return; } if (player.sanctuaryChoose.includes(card)) { player.sanctuaryChoose = player.sanctuaryChoose.filter(c => c !== card); player.hasToChoose = false; player.hasPlayed = true; player.playedSanctuaries.push(card); logEvent({ scope: 'server', action: 'sanctuaryChoose', playerId: socket.id, gameId: r, phase: rooms[r].phase, payload: { card } }); roomUpdate(r); } });
 	socket.on('updateAck', msg => { const r = locatePlayer(socket.id); if (!r) return; if (!rooms[r] || !rooms[r]._sentTimes) return; const sent = rooms[r]._sentTimes.get(msg.stateSeq); if (sent) { const rtt = Date.now() - sent; logEvent({ scope: 'server', action: 'updateAck', playerId: socket.id, gameId: r, latencyMs: rtt, payload: { stateSeq: msg.stateSeq } }); rooms[r]._sentTimes.delete(msg.stateSeq - 5); } else { logEvent({ scope: 'server', action: 'updateAck_missingSent', playerId: socket.id, gameId: r, payload: { stateSeq: msg.stateSeq } }); } });
