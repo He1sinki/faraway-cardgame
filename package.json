@@ -12,7 +12,9 @@
 		"logs:compress": "node scripts/compress_logs.js",
 		"logs:agg": "node scripts/aggregate_metrics.js",
 		"dataset:build": "node scripts/build_dataset.js",
-		"selfplay:collect": "BOTS=4 node scripts/selfplay.js && npm run dataset:build"
+		"dataset:split": "node scripts/split_dataset.js",
+		"episodes:compress": "node scripts/compress_episodes.js",
+		"selfplay:collect": "BOTS=4 TARGET_EPISODES=20 node scripts/selfplay.js && npm run dataset:build && npm run dataset:split && npm run episodes:compress"
 	},
 	"author": "",
 	"license": "ISC",

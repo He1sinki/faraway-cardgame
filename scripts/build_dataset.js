@@ -20,15 +20,15 @@ const out = fs.createWriteStream(outName, { flags: 'w' });
 let count = 0;
 
 for (const f of files) {
-  try {
-    const data = JSON.parse(fs.readFileSync(path.join(EP_DIR, f), 'utf8'));
-    for (const step of data.steps || []) {
-      out.write(JSON.stringify({ obs: step.obs, mask: step.mask, action: step.action, reward: step.reward, done: step.done }) + '\n');
-      count++;
-    }
-  } catch (e) { /* ignore */ }
+	try {
+		const data = JSON.parse(fs.readFileSync(path.join(EP_DIR, f), 'utf8'));
+		for (const step of data.steps || []) {
+			out.write(JSON.stringify({ obs: step.obs, mask: step.mask, action: step.action, reward: step.reward, done: step.done }) + '\n');
+			count++;
+		}
+	} catch (e) { /* ignore */ }
 }
 
-out.end(()=>{
-  console.log('Wrote', count, 'transitions to', outName);
+out.end(() => {
+	console.log('Wrote', count, 'transitions to', outName);
 });
