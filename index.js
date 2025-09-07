@@ -27,16 +27,19 @@ const PROTOCOL_VERSION = 1;
 function buildRoomState(roomId) {
 	const base = rooms[roomId];
 	if (!base) return null;
+	if (base._stateSeq === undefined) base._stateSeq = 0;
 	return {
 		...base,
 		protocolVersion: PROTOCOL_VERSION,
 		serverTime: Date.now(),
+		stateSeq: base._stateSeq,
 	};
 }
 
 function beginGame(room) {
 	logEvent({ scope: 'server', action: 'beginGame_init', gameId: room, payload: { users: rooms[room].users.length } });
 	io.to(room).emit('beginGame', { protocolVersion: PROTOCOL_VERSION, serverTime: Date.now() });
+	rooms[room]._stateSeq = 0;
 
 	rooms[room].turn = 0;
 	//pool is a list of numbers between 0 and regions.length -1
@@ -69,6 +72,7 @@ function beginGame(room) {
 	setTimeout(() => {
 		rooms[room].state = true;
 		logEvent({ scope: 'server', action: 'beginGame_started', gameId: room });
+		rooms[room]._stateSeq++;
 		io.to(room).emit('update', buildRoomState(room));
 	}, 300); // délai réduit
 }
@@ -81,7 +85,8 @@ function goToShop(room) {
 			rooms[room].players[uid].hasPlayed = true;
 		}
 		finishGame(room);
-		io.to(room).emit('update', rooms[room]);
+		rooms[room]._stateSeq++;
+		io.to(room).emit('update', buildRoomState(room));
 		return;
 	}
 	resetHasPlayed(room);
@@ -151,12 +156,14 @@ function finishGame(room) {
 	let max = -Infinity;
 	for (const uid of rooms[room].users) {
 		const s = countPoints(rooms[room].players[uid]);
+		logEvent({ scope: 'server', action: 'score_breakdown', gameId: room, playerId: uid, payload: s });
 		scores.push(s);
 		if (s.total > max) max = s.total;
 	}
 	const winners = rooms[room].users.filter((uid, idx) => scores[idx].total === max);
 	rooms[room].winner = winners; // tableau (peut contenir plusieurs gagnants)
 	rooms[room].score = scores; // aligné avec users
+	logEvent({ scope: 'server', action: 'endGameScore', gameId: room, payload: { winners, scores } });
 }
 
 function countPoints(player) {
@@ -313,6 +320,7 @@ function roomUpdate(room) {
 					goToShop(room);
 				}
 			}
+			rooms[room]._stateSeq++;
 			logEvent({ scope: 'server', action: 'state_update', gameId: room, phase: 'play', payload: { turn: rooms[room].turn } });
 			io.to(room).emit('update', buildRoomState(room));
 			break;
@@ -332,6 +340,7 @@ function roomUpdate(room) {
 				generateShop(room);
 			}
 			logEvent({ scope: 'server', action: 'state_update', gameId: room, phase: 'shop', payload: { turn: rooms[room].turn } });
+			rooms[room]._stateSeq++;
 			io.to(room).emit('update', buildRoomState(room));
 			break;
 		}
@@ -341,6 +350,7 @@ function roomUpdate(room) {
 				goToShop(room);
 			}
 			logEvent({ scope: 'server', action: 'state_update', gameId: room, phase: 'sanctuary', payload: { turn: rooms[room].turn } });
+			rooms[room]._stateSeq++;
 			io.to(room).emit('update', buildRoomState(room));
 			break;
 		}
@@ -531,6 +541,12 @@ io.on('connection', (socket) => {
 			roomUpdate(r);
 		}
 	})
+
+	socket.on('updateAck', (msg) => {
+		// msg: { stateSeq, clientTime }
+		// latency approximative serveur->client->serveur = now - serverSentTime (approx absent) -> utiliser serverTime dans update future (Phase 2.4). Ici on log juste réception ack.
+		logEvent({ scope: 'server', action: 'updateAck', playerId: socket.id, payload: { stateSeq: msg.stateSeq, clientTime: msg.clientTime } });
+	});
 })
 server.listen(port, function () {
 	console.log(`Listening on port ${port}`);

@@ -7,6 +7,8 @@ const { io } = require('socket.io-client');
 const SERVER_URL = process.env.SERVER_URL || 'http://localhost:8080';
 
 const socket = io(SERVER_URL, { reconnection: true });
+let lastUpdateReceived = 0;
+let lastSeq = -1;
 
 socket.on('connect', () => {
 	console.log('[bot] connected', socket.id);
@@ -41,7 +43,9 @@ socket.on('beginGame', (info) => {
 });
 
 socket.on('update', (st) => {
-	// stub: do nothing yet
+	lastUpdateReceived = Date.now();
+	lastSeq = st.stateSeq;
+	socket.emit('updateAck', { stateSeq: st.stateSeq, clientTime: lastUpdateReceived });
 });
 
 socket.on('disconnect', () => console.log('[bot] disconnected'));
