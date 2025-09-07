@@ -11,6 +11,7 @@
 		"selfplay:adv": "node scripts/selfplay.js --bots 8 --max-parallel 4 --episodes 100 --rotate --batch-size 25",
 		"queue:consume": "node dataset/queue/queue_consumer.js",
 		"selfplay+queue": "node scripts/selfplay_with_queue.js",
+		"quality": "node scripts/quality_check.js",
 		"train": "bash scripts/train.sh",
 		"logs:compress": "node scripts/compress_logs.js",
 		"logs:agg": "node scripts/aggregate_metrics.js",

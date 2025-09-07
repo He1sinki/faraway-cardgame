@@ -165,6 +165,9 @@ Objectif global: développer, entraîner et intégrer une IA capable de se conne
 
 ### 5.4 Contrôle qualité data
 - Vérifs périodiques: distribution actions, % invalid moves (doit tendre à 0), longueur moyenne parties.
+  - Implémenté script: `scripts/quality_check.js` (commande: `npm run quality`).
+  - Produit: `metrics/quality_latest.json` + `metrics/quality_latest.md` + historisation.
+  - Indicateurs: distribution top actions, entropie, nullAction%, reward stats, seeds unicité, backlog queue.
 
 ### 5.5 Versioning des policy checkpoints
 - Dossier `runs/` (déjà présent) → sous-dossiers timestamp + `model.ckpt`, `config.json`, `stats.json`.
