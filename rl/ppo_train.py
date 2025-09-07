@@ -1,10 +1,19 @@
 #!/usr/bin/env python3
-"""Phase 3.6 - Entraînement PPO minimal custom sur rollouts offline.
-Lit data/rollouts/processed_adv/*.jsonl et entraîne une policy + value.
-Cette version n'effectue PAS encore de sampling masqué; elle suppose actions déjà légales.
+"""Phase 6.2 - Entraînement PPO custom offline (pipeline unifiée améliorée).
+
+Améliorations vs version précédente:
+ - Lecture hyperparams depuis rl/config/ppo.yaml
+ - Sauvegarde état optimizer pour reprise
+ - Reprise automatique dernier couple (policy, optimizer) si dimensions compatibles
+ - Export métriques détaillées (policy_loss, value_loss, entropy, approx_kl, count)
+ - Seed déterministe (si fourni dans config)
+
+Entrée: data/rollouts/processed_adv/*.jsonl (champs: obs (b64 float32), action, return, advantage, mask)
+Sorties: runs/ppo_policy_<ts>.pt, runs/ppo_optimizer_<ts>.pt, runs/ppo_stats_<ts>.json
 """
-import os, glob, json, base64, math, time, struct
-from typing import List, Tuple
+import os, glob, json, base64, time, struct, random
+from typing import List, Tuple, Dict, Any
+import yaml
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -14,8 +23,9 @@ RUNS_DIR = "runs"
 os.makedirs(RUNS_DIR, exist_ok=True)
 
 LOGICAL_ACT_DIM = 208  # actions réelles (2R+S+NOOP)
-PAD_DIM = 256  # masque/stockage
+PAD_DIM = 256  # masque/stockage (fixe pour padding binaire)
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+CONFIG_PATH = os.path.join("rl", "config", "ppo.yaml")
 
 
 def decode_obs(b64: str) -> List[float]:
@@ -63,7 +73,6 @@ class RolloutBuffer:
         returns = torch.tensor(self.returns, dtype=torch.float32, device=DEVICE)
         advs = torch.tensor(self.advs, dtype=torch.float32, device=DEVICE)
         masks = torch.tensor(self.masks, dtype=torch.float32, device=DEVICE)
-        # normalize advantages
         advs = (advs - advs.mean()) / (advs.std() + 1e-8)
         return obs, actions, returns, advs, masks
 
@@ -103,35 +112,38 @@ def load_buffer(limit_files: int = 200) -> Tuple[RolloutBuffer, int]:
 
 
 def ppo_update(
-    model,
-    old_model,
-    optimizer,
-    obs,
-    actions,
-    returns,
-    advs,
-    masks,
-    clip=0.2,
-    vf_coef=0.5,
-    ent_coef=0.01,
-    batch_size=256,
-    epochs=3,
-):
+    model: nn.Module,
+    old_model: nn.Module,
+    optimizer: optim.Optimizer,
+    obs: torch.Tensor,
+    actions: torch.Tensor,
+    returns: torch.Tensor,
+    advs: torch.Tensor,
+    masks: torch.Tensor,
+    *,
+    clip: float,
+    vf_coef: float,
+    ent_coef: float,
+    batch_size: int,
+    epochs: int,
+) -> Dict[str, Any]:
     N = obs.size(0)
     old_model.eval()
     with torch.no_grad():
-        old_logits, old_values = old_model(obs)
+        old_logits, _old_values = old_model(obs)
         old_log_probs = (
             torch.log_softmax(old_logits, dim=-1)
             .gather(1, actions.unsqueeze(1))
             .squeeze(1)
         )
-    for ep in range(epochs):
+    policy_losses = []
+    value_losses = []
+    entropies = []
+    for _ep in range(epochs):
         perm = torch.randperm(N, device=obs.device)
         for i in range(0, N, batch_size):
             idx = perm[i : i + batch_size]
             logits, values = model(obs[idx])
-            # Appliquer masque (seules premières LOGICAL_ACT_DIM colonnes concernées)
             sub_mask = masks[idx][:, :LOGICAL_ACT_DIM]
             masked_logits = logits.masked_fill(sub_mask == 0, -1e9)
             log_probs_all = torch.log_softmax(masked_logits, dim=-1)
@@ -140,75 +152,146 @@ def ppo_update(
             surr1 = ratio * advs[idx]
             surr2 = torch.clamp(ratio, 1.0 - clip, 1.0 + clip) * advs[idx]
             policy_loss = -torch.min(surr1, surr2).mean()
-            # value loss
-            v_pred = values
             v_target = returns[idx]
-            value_loss = (v_pred - v_target).pow(2).mean()
-            # entropy
+            value_loss = (values - v_target).pow(2).mean()
             entropy = -(log_probs_all * torch.exp(log_probs_all)).sum(-1).mean()
             loss = policy_loss + vf_coef * value_loss - ent_coef * entropy
             optimizer.zero_grad()
             loss.backward()
             nn.utils.clip_grad_norm_(model.parameters(), 0.5)
             optimizer.step()
-    # compute diagnostics
+            policy_losses.append(policy_loss.item())
+            value_losses.append(value_loss.item())
+            entropies.append(entropy.item())
     with torch.no_grad():
-        logits, values = model(obs)
+        logits, _values_f = model(obs)
         masked_logits = logits.masked_fill(masks[:, :LOGICAL_ACT_DIM] == 0, -1e9)
-        logp = (
+        new_logp = (
             torch.log_softmax(masked_logits, dim=-1)
             .gather(1, actions.unsqueeze(1))
             .squeeze(1)
         )
-        approx_kl = (old_log_probs - logp).mean().item()
-        probs = torch.softmax(masked_logits, dim=-1)
-        entropy_final = (
-            -(torch.log_softmax(masked_logits, dim=-1) * probs).sum(-1).mean().item()
-        )
-    return {"approx_kl": approx_kl, "entropy": entropy_final}
+        approx_kl = (old_log_probs - new_logp).mean().item()
+    return {
+        "approx_kl": approx_kl,
+        "entropy": sum(entropies) / max(1, len(entropies)),
+        "policy_loss": sum(policy_losses) / max(1, len(policy_losses)),
+        "value_loss": sum(value_losses) / max(1, len(value_losses)),
+        "epochs": epochs,
+        "batches": len(policy_losses),
+    }
+
+
+def load_config(path: str) -> Dict[str, Any]:
+    if not os.path.exists(path):
+        return {}
+    with open(path, "r") as f:
+        return yaml.safe_load(f) or {}
+
+
+def set_seed(seed: int):
+    random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
+
+
+def find_latest(pattern: str) -> str | None:
+    pts = glob.glob(pattern)
+    return max(pts, key=os.path.getmtime) if pts else None
+
+
+def try_resume(model: nn.Module) -> tuple[int, str | None]:
+    latest_policy = find_latest(os.path.join(RUNS_DIR, "ppo_policy_*.pt"))
+    loaded = 0
+    if latest_policy:
+        try:
+            state = torch.load(latest_policy, map_location=DEVICE)
+            model.load_state_dict(state)
+            loaded = 1
+            print(f"[ppo] reprise policy depuis {latest_policy}")
+        except Exception as e:
+            print(f"[ppo] reprise ignorée: {e}")
+    return loaded, latest_policy
+
+
+def try_resume_optimizer(optimizer: optim.Optimizer, latest_policy_path: str | None):
+    if not latest_policy_path:
+        return 0
+    ts = latest_policy_path.split("_")[-1].split(".")[0]
+    opt_path = os.path.join(RUNS_DIR, f"ppo_optimizer_{ts}.pt")
+    if os.path.exists(opt_path):
+        try:
+            state = torch.load(opt_path, map_location=DEVICE)
+            optimizer.load_state_dict(state)
+            print(f"[ppo] optimizer repris depuis {opt_path}")
+            return 1
+        except Exception as e:
+            print(f"[ppo] optimizer reprise échouée: {e}")
+    return 0
 
 
 def main():
+    cfg = load_config(CONFIG_PATH)
+    lr = float(cfg.get("learning_rate", 3e-4))
+    batch_size = int(cfg.get("batch_size", 256))
+    n_epochs = int(cfg.get("n_epochs", cfg.get("epochs", 3)))
+    clip = float(cfg.get("clip_range", 0.2))
+    ent_coef = float(cfg.get("entropy_coef", 0.01))
+    vf_coef = float(cfg.get("value_coef", 0.5))
+    seed = cfg.get("seed")
+    if seed is not None:
+        set_seed(int(seed))
     buf, obs_dim = load_buffer()
     obs, actions, returns, advs, masks = buf.build()
     model = PolicyValueNet(obs_dim).to(DEVICE)
-    # init from offline imitation if exists
-    meta_path = os.path.join(RUNS_DIR, "policy_meta.json")
-    if os.path.exists(meta_path):
-        latest = None
-        # load latest policy_*.pt
-        pts = [p for p in glob.glob(os.path.join(RUNS_DIR, "policy_*.pt"))]
-        if pts:
-            latest = max(pts, key=os.path.getmtime)
-        if latest:
-            try:
-                state = torch.load(latest, map_location=DEVICE)
-                # les poids value head seront ignorés (absents)
-                model.load_state_dict({**model.state_dict(), **state}, strict=False)
-                print("[ppo] initialisé depuis", latest)
-            except Exception as e:
-                print("[ppo] init offline échouée:", e)
+    resumed_flag, latest_policy = try_resume(model)
     old_model = PolicyValueNet(obs_dim).to(DEVICE)
     old_model.load_state_dict(model.state_dict())
-    optimizer = optim.Adam(model.parameters(), lr=3e-4)
+    optimizer = optim.Adam(model.parameters(), lr=lr)
+    try_resume_optimizer(optimizer, latest_policy)
     metrics = ppo_update(
-        model, old_model, optimizer, obs, actions, returns, advs, masks
+        model,
+        old_model,
+        optimizer,
+        obs,
+        actions,
+        returns,
+        advs,
+        masks,
+        clip=clip,
+        vf_coef=vf_coef,
+        ent_coef=ent_coef,
+        batch_size=batch_size,
+        epochs=n_epochs,
     )
     ts = int(time.time())
-    outp = os.path.join(RUNS_DIR, f"ppo_policy_{ts}.pt")
-    torch.save(model.state_dict(), outp)
-    with open(os.path.join(RUNS_DIR, f"ppo_stats_{ts}.json"), "w") as f:
-        json.dump(
-            {
-                "obs_dim": obs_dim,
-                "logical_act_dim": LOGICAL_ACT_DIM,
-                "pad_dim": PAD_DIM,
-                "metrics": metrics,
-                "count": obs.size(0),
-            },
-            f,
-        )
-    print("[ppo] saved", outp, metrics)
+    policy_path = os.path.join(RUNS_DIR, f"ppo_policy_{ts}.pt")
+    torch.save(model.state_dict(), policy_path)
+    opt_path = os.path.join(RUNS_DIR, f"ppo_optimizer_{ts}.pt")
+    torch.save(optimizer.state_dict(), opt_path)
+    stats = {
+        "obs_dim": obs_dim,
+        "logical_act_dim": LOGICAL_ACT_DIM,
+        "pad_dim": PAD_DIM,
+        "metrics": metrics,
+        "count": obs.size(0),
+        "config_used": {
+            "learning_rate": lr,
+            "batch_size": batch_size,
+            "n_epochs": n_epochs,
+            "clip_range": clip,
+            "entropy_coef": ent_coef,
+            "value_coef": vf_coef,
+            "seed": seed,
+        },
+        "resumed": bool(resumed_flag),
+        "timestamp": ts,
+    }
+    stats_path = os.path.join(RUNS_DIR, f"ppo_stats_{ts}.json")
+    with open(stats_path, "w") as f:
+        json.dump(stats, f, indent=2)
+    print("[ppo] saved", policy_path, "metrics=", metrics)
 
 
 if __name__ == "__main__":
