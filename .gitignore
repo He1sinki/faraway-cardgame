@@ -3,3 +3,4 @@ package-lock.json
 json/tokens.json
 .DS_Store
 logs/
+dataset/

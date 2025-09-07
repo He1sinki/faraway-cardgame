@@ -13,7 +13,7 @@ const path = require('path');
 
 const SERVER_URL = process.env.SERVER_URL || 'http://localhost:8080';
 const BOT_ID = process.env.BOT_ID || process.env.BOT_INDEX || 'bot';
-const EPISODE_DIR = path.join(process.cwd(), 'dataset', 'episodes');
+const EPISODE_DIR = process.env.EPISODE_DIR ? path.resolve(process.env.EPISODE_DIR) : path.join(process.cwd(), 'dataset', 'episodes');
 
 const socket = io(SERVER_URL, { reconnection: true });
 let lastUpdate = null;
