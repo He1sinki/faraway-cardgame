@@ -212,8 +212,36 @@ Objectif global: développer, entraîner et intégrer une IA capable de se conne
   - Doc: `docs/persistence.md`.
 
 ### 6.7 Tests
-- Test unitaire advantage calc (comparer expected calcul manuel).
-- Test overfit mini-batch (policy doit apprendre séquence triviale).
+Tests obligatoires (fiabilité pipeline avant Phase 7):
+1. Advantage & Returns (Monte Carlo vs calcul manuel)  
+  - Script: `rl/tests/test_advantage_calc.py`  
+  - Cas couverts:  
+    * Retour discounté simple (séquence [1,1,1])  
+    * GAE sans bootstrap sur état terminal  
+    * GAE avec récompenses nulles (vérifie décroissance vers -V)  
+  - Objectif: éviter régression future lors passage placeholder → GAE véritable dans `scripts/compute_returns_advantages.py`.
+2. Overfit mini-batch  
+  - Script: `rl/tests/test_overfit_minibatch.py`  
+  - Dataset synthétique (action correcte constante).  
+  - Critère: probabilité moyenne de l’action correcte > 0.95 après 200 epochs (sanity check backprop + normalisation).  
+3. Masque actions fallback  
+  - Script existant: `rl/tests/test_mask_fallback.py` (zéro masque).  
+  - Étendre plus tard: cas 1 seule action valide, cas actions disjointes sur batch.
+4. Intégration preprocessing → entraînement (test fumée)  
+  - Étapes: générer 1 petit fichier `episode_*.jsonl` factice → lancer `rollouts:returns` → `python.sh rl/ppo_train.py --updates 1` (ou config) → vérifier création `ppo_policy_*.pt`.
+5. Non-régression NaN  
+  - Ajout futur: scanner gradients / losses pour NaN après mini-update sur batch réduit.
+
+Actions restantes pour finaliser Phase 6.7:
+- [ ] Implémenter GAE réel dans `scripts/compute_returns_advantages.py` (param gamma, lambda; fallback si champs manquants).
+- [ ] Ajouter script `npm run test:rl` pour exécuter uniquement tests RL (pytest minimal ou exécution directe). 
+- [ ] Intégrer exécution tests 6.7 dans CI (futur Phase 10). 
+- [ ] Étendre test masque pour vérifier softmax restreint (aucune proba sur actions invalides). 
+
+Critère de complétion Phase 6.7:
+- Tous tests 1–3 passent localement. 
+- Overfit atteint seuil >0.95. 
+- Fichier checkpoint généré dans runs/ via test fumée.
 
 ### Checkpoints
 - Premier checkpoint `runs/ppo_YYYYMMDD_HHMM/` créé.

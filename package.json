@@ -34,7 +34,8 @@
 		"env:test": "node rl/test_env_basic.js",
 		"export:npz": "node scripts/export_npz.js",
 		"test:mask": "node rl/test_mask_consistency.js",
-		"test:mask:py": "scripts/python.sh rl/tests/test_mask_fallback.py"
+		"test:mask:py": "scripts/python.sh rl/tests/test_mask_fallback.py",
+		"test:rl": "npm run setup:python --silent && scripts/python.sh rl/tests/test_advantage_calc.py && scripts/python.sh rl/tests/test_overfit_minibatch.py && npm run test:mask:py"
 	},
 	"author": "",
 	"license": "ISC",

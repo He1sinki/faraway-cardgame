@@ -7,3 +7,4 @@ dataset/
 .venv/
 data/
 runs/
+*.pyc
