@@ -17,6 +17,15 @@ function actionMask(state, playerId) {
 	return player.hand.map(() => 1);
 }
 
+function buildFullMask(state, playerId) {
+	const player = state.players?.[playerId];
+	const M = 256;
+	const mask = new Array(M).fill(0);
+	if (!player) return mask;
+	for (const cid of player.hand) if (cid < M) mask[cid] = 1;
+	return mask;
+}
+
 function featurize(state, playerId) {
 	const player = state.players?.[playerId];
 	if (!player) return { vector: [], mask: [] };
@@ -45,7 +54,7 @@ function featurize(state, playerId) {
 	const handBuckets = new Array(CARD_BUCKETS).fill(0);
 	for (const c of player.hand) handBuckets[c % CARD_BUCKETS]++;
 
-	const mask = actionMask(state, playerId);
+	const mask = buildFullMask(state, playerId);
 
 	const vector = [
 		turn / 8, // normalized
