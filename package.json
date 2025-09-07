@@ -23,6 +23,8 @@
 		"episodes:index": "node scripts/build_replay_index.js",
 		"selfplay:collect": "BOTS=4 TARGET_EPISODES=20 node scripts/selfplay.js && npm run dataset:build && npm run dataset:dedup && npm run dataset:normalize && npm run dataset:split && npm run episodes:compress && npm run episodes:index",
 		"ppo": "python rl/ppo_train.py",
+		"checkpoint": "node scripts/checkpoint_versioning.js",
+		"ppo:versioned": "python rl/ppo_train.py && npm run checkpoint",
 		"test:encode": "node rl/test_encode_observation.js",
 		"env:test": "node rl/test_env_basic.js",
 		"export:npz": "node scripts/export_npz.js",

@@ -170,7 +170,10 @@ Objectif global: développer, entraîner et intégrer une IA capable de se conne
   - Indicateurs: distribution top actions, entropie, nullAction%, reward stats, seeds unicité, backlog queue.
 
 ### 5.5 Versioning des policy checkpoints
-- Dossier `runs/` (déjà présent) → sous-dossiers timestamp + `model.ckpt`, `config.json`, `stats.json`.
+- Dossier `runs/` (déjà présent) → sous-dossiers timestamp + `model.ckpt`, `metadata.json`, `stats.json`.
+  - Script ajouté: `scripts/checkpoint_versioning.js` (commande: `npm run checkpoint`).
+  - Génère dossier `ppo_YYYYMMDD_HHMMSS/` avec copie du dernier `ppo_policy_*.pt` -> `model.ckpt` + `stats.json` + `metadata.json` (git commit, runSeed, hash config).
+  - Commande combinée: `npm run ppo:versioned` (train + versioning).
 
 ### Checkpoints
 - Générer 10 parties → fichier transitions non vide.

@@ -1,0 +1,8 @@
+{
+  "createdAt": 1757269775285,
+  "runSeed": null,
+  "gitCommit": "e408b3e",
+  "configHash": "8af5b7e7fe6b",
+  "ppoConfigSnippet": "# PPO Configuration (Phase 1.3 Draft)\npolicy: \"MlpPolicy\"\nlearning_rate: 0.0003\ngamma: 0.995\ngae_lambda: 0.95\nclip_range: 0.2\nentropy_coef: 0.01\nvalue_coef: 0.5\nmax_grad_norm: 0.5\nn_steps: 2048\nbatch_size: 256\nn_epochs: 3\nvf_clip: null\nnormalize_advantage: true\nseed: 12345\nobs_dim: 0   # à remplir après encodeur\nact_dim: 208 # 2R + S + 1 = 208 (R=77, S=53)\n",
+  "source": "phase5.5"
+}
