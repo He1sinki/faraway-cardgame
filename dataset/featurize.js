@@ -1,6 +1,6 @@
-// Simple featurization of server state into a flat numeric array (Phase 3.1)
-// NOTE: This is a first-pass heuristic; will evolve with learning.
-// Export: featurize(state, playerId) -> { vector: number[], mask: number[] }
+// Simple featurization of server state into a flat numeric array (Phase 3.x legacy)
+// NOTE: Phase 4.1 introduces a richer encoder in `rl/encode_observation.js`.
+// Export kept for backward compatibility: featurize(state, playerId) -> { vector: number[], mask: number[] }
 
 function oneHot(index, size) {
 	const arr = new Array(size).fill(0);
