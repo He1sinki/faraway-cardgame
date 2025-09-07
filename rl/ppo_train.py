@@ -11,12 +11,22 @@ Améliorations vs version précédente:
 Entrée: data/rollouts/processed_adv/*.jsonl (champs: obs (b64 float32), action, return, advantage, mask)
 Sorties: runs/ppo_policy_<ts>.pt, runs/ppo_optimizer_<ts>.pt, runs/ppo_stats_<ts>.json
 """
-import os, glob, json, base64, time, struct, random
+import os, glob, json, base64, time, struct, random, sys
 from typing import List, Tuple, Dict, Any
 import yaml
 import torch
 import torch.nn as nn
 import torch.optim as optim
+
+if __name__ == "__main__":
+    # Assure inclusion racine projet pour import relatif (phase 6.6 persistence)
+    root = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir))
+    if root not in sys.path:
+        sys.path.insert(0, root)
+try:  # essaye import package
+    from rl.scaler import RunningMeanStd  # type: ignore
+except ModuleNotFoundError:  # fallback relatif
+    from scaler import RunningMeanStd  # type: ignore
 
 ROLL_DIR = os.path.join("data", "rollouts", "processed_adv")
 RUNS_DIR = "runs"
@@ -71,9 +81,19 @@ class RolloutBuffer:
         obs = torch.tensor(self.obs, dtype=torch.float32, device=DEVICE)
         actions = torch.tensor(self.actions, dtype=torch.long, device=DEVICE)
         returns = torch.tensor(self.returns, dtype=torch.float32, device=DEVICE)
-        advs = torch.tensor(self.advs, dtype=torch.float32, device=DEVICE)
+        advs_raw = torch.tensor(self.advs, dtype=torch.float32, device=DEVICE)
         masks = torch.tensor(self.masks, dtype=torch.float32, device=DEVICE)
-        advs = (advs - advs.mean()) / (advs.std() + 1e-8)
+        # Stats avant normalisation
+        print(
+            f"[diag] returns: mean={returns.mean():.4f} std={returns.std():.4f} min={returns.min():.4f} max={returns.max():.4f}"
+        )
+        print(
+            f"[diag] adv_raw: mean={advs_raw.mean():.4f} std={advs_raw.std():.4f} min={advs_raw.min():.4f} max={advs_raw.max():.4f}"
+        )
+        advs = (advs_raw - advs_raw.mean()) / (advs_raw.std() + 1e-8)
+        print(
+            f"[diag] adv_norm: mean={advs.mean():.4f} std={advs.std():.4f} min={advs.min():.4f} max={advs.max():.4f}"
+        )
         return obs, actions, returns, advs, masks
 
 
@@ -127,16 +147,54 @@ def ppo_update(
     vf_clip: float | None,
     batch_size: int,
     epochs: int,
+    mask_fill: float,
+    ratio_cap: float,
 ) -> Dict[str, Any]:
+    # N initial (peut changer après filtrage invalides)
     N = obs.size(0)
     old_model.eval()
+
+    def restricted_log_softmax(all_logits: torch.Tensor, mask_valid: torch.Tensor):
+        # all_logits: (B, A) mask_valid: (B, A) (0/1)
+        # returns log_probs_all with -inf on invalid, probs_all (invalid=0), entropy_per_sample
+        # Shift for stability
+        shifted = all_logits - all_logits.max(dim=-1, keepdim=True).values
+        shifted = shifted.masked_fill(mask_valid == 0, float("-inf"))
+        logZ = torch.logsumexp(shifted, dim=-1, keepdim=True)
+        log_probs = shifted - logZ
+        probs = torch.exp(log_probs)
+        probs = probs * mask_valid  # ensure invalid exactly 0
+        # Entropy only over valid actions
+        entropy = -(probs * log_probs.masked_fill(mask_valid == 0, 0.0)).sum(-1)
+        return log_probs, probs, entropy
+
     with torch.no_grad():
         old_logits, _old_values = old_model(obs)
-        old_log_probs = (
-            torch.log_softmax(old_logits, dim=-1)
-            .gather(1, actions.unsqueeze(1))
-            .squeeze(1)
+        sub_mask_all = masks[:, :LOGICAL_ACT_DIM]
+        invalid_action_mask = sub_mask_all[torch.arange(N), actions] == 0
+        dropped_invalid = int(invalid_action_mask.sum().item())
+        if dropped_invalid:
+            print(
+                f"[diag][drop] {dropped_invalid} transitions (action invalide) retirées avant update"
+            )
+        keep = ~invalid_action_mask
+        if keep.sum() == 0:
+            raise RuntimeError(
+                "Aucune transition valide après filtrage des actions invalides"
+            )
+        obs = obs[keep]
+        actions = actions[keep]
+        returns = returns[keep]
+        advs = advs[keep]
+        masks = masks[keep]
+        N = obs.size(0)
+        print(f"[diag] transitions retenues après filtrage: {N}")
+        sub_mask_all = masks[:, :LOGICAL_ACT_DIM]
+        old_logits = old_logits[keep]
+        old_log_probs_all, old_probs_all, old_entropy_samples = restricted_log_softmax(
+            old_logits, sub_mask_all
         )
+        old_log_probs = old_log_probs_all.gather(1, actions.unsqueeze(1)).squeeze(1)
     policy_losses = []
     value_losses = []
     entropies = []
@@ -148,9 +206,12 @@ def ppo_update(
             idx = perm[i : i + batch_size]
             logits, values = model(obs[idx])
             sub_mask = masks[idx][:, :LOGICAL_ACT_DIM]
-            masked_logits = logits.masked_fill(sub_mask == 0, -1e9)
-            log_probs_all = torch.log_softmax(masked_logits, dim=-1)
-            log_probs = log_probs_all.gather(1, actions[idx].unsqueeze(1)).squeeze(1)
+            new_log_probs_all, new_probs_all, new_entropy_samples = (
+                restricted_log_softmax(logits, sub_mask)
+            )
+            log_probs = new_log_probs_all.gather(1, actions[idx].unsqueeze(1)).squeeze(
+                1
+            )
             ratio = torch.exp(log_probs - old_log_probs[idx])
             surr1 = ratio * advs[idx]
             surr2 = torch.clamp(ratio, 1.0 - clip, 1.0 + clip) * advs[idx]
@@ -164,7 +225,7 @@ def ppo_update(
                 value_loss = torch.max(value_loss_unclipped, value_loss_clipped).mean()
             else:
                 value_loss = (values - v_target).pow(2).mean()
-            entropy = -(log_probs_all * torch.exp(log_probs_all)).sum(-1).mean()
+            entropy = new_entropy_samples.mean()
             loss = policy_loss + vf_coef * value_loss - ent_coef * entropy
             optimizer.zero_grad()
             loss.backward()
@@ -179,22 +240,49 @@ def ppo_update(
             entropies.append(entropy.item())
     with torch.no_grad():
         logits, _values_f = model(obs)
-        masked_logits = logits.masked_fill(masks[:, :LOGICAL_ACT_DIM] == 0, -1e9)
-        new_logp = (
-            torch.log_softmax(masked_logits, dim=-1)
-            .gather(1, actions.unsqueeze(1))
-            .squeeze(1)
+        sub_mask_final = masks[:, :LOGICAL_ACT_DIM]
+        new_log_all, new_probs_all, new_entropy_all = restricted_log_softmax(
+            logits, sub_mask_final
         )
+        new_logp = new_log_all.gather(1, actions.unsqueeze(1)).squeeze(1)
         approx_kl = (old_log_probs - new_logp).mean().item()
+        # KL exacte restreinte
+        kl_exact_vec = (old_probs_all * (old_log_probs_all - new_log_all)).sum(-1)
+        kl_exact = kl_exact_vec.mean().item()
+        old_lp_mean = old_log_probs.mean().item()
+        new_lp_mean = new_logp.mean().item()
+        old_lp_std = old_log_probs.std().item()
+        new_lp_std = new_logp.std().item()
+    ratio_full = torch.exp(new_logp - old_log_probs)
+    if ratio_cap > 0:
+        low = 1.0 / ratio_cap
+        high = ratio_cap
+        ratio_full = ratio_full.clamp(low, high)
+    ratio_mean = ratio_full.mean().item()
+    ratio_std = ratio_full.std().item()
+    ratio_max = ratio_full.max().item()
+    ratio_p95 = torch.quantile(
+        ratio_full, torch.tensor(0.95, device=ratio_full.device)
+    ).item()
     clip_fraction = clip_frac_acc / max(1, total_samples)
     return {
         "approx_kl": approx_kl,
+        "kl_exact": kl_exact,
         "entropy": sum(entropies) / max(1, len(entropies)),
         "policy_loss": sum(policy_losses) / max(1, len(policy_losses)),
         "value_loss": sum(value_losses) / max(1, len(value_losses)),
         "epochs": epochs,
         "batches": len(policy_losses),
         "clip_fraction": clip_fraction,
+        "ratio_mean": ratio_mean,
+        "ratio_std": ratio_std,
+        "ratio_max": ratio_max,
+        "ratio_p95": ratio_p95,
+        "old_logp_mean": old_lp_mean,
+        "new_logp_mean": new_lp_mean,
+        "old_logp_std": old_lp_std,
+        "new_logp_std": new_lp_std,
+        "dropped_invalid": dropped_invalid,
     }
 
 
@@ -272,19 +360,84 @@ def main():
         set_seed(int(seed))
     buf, obs_dim = load_buffer()
     obs, actions, returns, advs, masks = buf.build()
+    resume_enabled = bool(cfg.get("resume", True))
+    adv_clamp = float(cfg.get("adv_clamp", 0.0))
+    mask_fill = float(cfg.get("mask_fill", -1e9))
+    ignore_single_valid = bool(cfg.get("ignore_single_valid", False))
+    ratio_cap = float(cfg.get("ratio_cap", 0.0))
+
+    # Phase 6.6 – Normalisation observations + reprise scaler
+    scaler = RunningMeanStd(shape=(obs_dim,))
+
+    # Reprise éventuelle scaler (même timestamp que dernier policy)
+    latest_policy = (
+        find_latest(os.path.join(RUNS_DIR, "ppo_policy_*.pt"))
+        if resume_enabled
+        else None
+    )
+    latest_ts = None
+    if latest_policy:
+        try:
+            latest_ts = latest_policy.split("_")[-1].split(".")[0]
+            scaler_path = os.path.join(RUNS_DIR, f"ppo_scaler_{latest_ts}.pt")
+            if os.path.exists(scaler_path):
+                scaler.load_state_dict(torch.load(scaler_path, map_location=DEVICE))
+                print(
+                    f"[ppo] scaler repris depuis {scaler_path} (count={scaler.count:.0f})"
+                )
+        except Exception as e:
+            print(f"[ppo] reprise scaler ignorée: {e}")
+
+    # Met à jour scaler avec toutes les observations (offline) puis normalise
+    with torch.no_grad():
+        scaler.update(obs)
+        obs = scaler.normalize(obs)
     model = PolicyValueNet(obs_dim).to(DEVICE)
-    resumed_flag, latest_policy = try_resume(model)
+    resumed_flag, latest_policy = try_resume(model) if resume_enabled else (0, None)
     old_model = PolicyValueNet(obs_dim).to(DEVICE)
     old_model.load_state_dict(model.state_dict())
     lr_schedule_mode = cfg.get("lr_schedule", "none")
     total_updates = int(cfg.get("updates", 1))
     optimizer = optim.Adam(model.parameters(), lr=base_lr)
-    try_resume_optimizer(optimizer, latest_policy)
+    if resume_enabled:
+        try_resume_optimizer(optimizer, latest_policy)
     early_stop = bool(cfg.get("early_stop", True))
     target_kl = float(cfg.get("target_kl", 0.1))
     min_entropy = float(cfg.get("min_entropy", 0.05))
     lr_kl_factor = float(cfg.get("lr_kl_factor", 0.5))
     patience_updates = int(cfg.get("patience_updates", 0))
+    # Diagnostics masque (ancienne version non filtrante)
+    with torch.no_grad():
+        valid_counts = masks[:, :LOGICAL_ACT_DIM].sum(dim=1)
+        vc_mean = valid_counts.float().mean().item()
+        print(
+            f"[diag] mask valid actions count: mean={vc_mean:.2f} min={valid_counts.min().item()} max={valid_counts.max().item()}"
+        )
+        uniq, cnt = torch.unique(valid_counts, return_counts=True)
+        hist = {int(u.item()): int(c.item()) for u, c in zip(uniq, cnt)}
+        print(f"[diag] mask histogram: {hist}")
+        if ignore_single_valid:
+            keep = valid_counts > 1
+            dropped = (~keep).sum().item()
+            if dropped:
+                obs = obs[keep]
+                actions = actions[keep]
+                returns = returns[keep]
+                advs = advs[keep]
+                masks = masks[keep]
+                print(f"[diag] dropped {dropped} transitions (single valid action)")
+        if (actions >= LOGICAL_ACT_DIM).any():
+            bad = (actions >= LOGICAL_ACT_DIM).sum().item()
+            print(f"[diag][WARN] {bad} actions >= LOGICAL_ACT_DIM (out of range)")
+        sample_logits, _ = model(obs[:1])
+        sm = torch.log_softmax(sample_logits, dim=-1)[0]
+        topv, topi = torch.topk(sm, 5)
+        print("[diag] top5 pre-train log-probs:")
+        for lv, li in zip(topv.tolist(), topi.tolist()):
+            print(f"    idx={li} logp={lv:.3f}")
+    if adv_clamp > 0:
+        advs = advs.clamp_(-adv_clamp, adv_clamp)
+        print(f"[diag] advs clamped to ±{adv_clamp}")
     history = []
     for update_idx in range(total_updates):
         # scheduler
@@ -307,6 +460,8 @@ def main():
             batch_size=batch_size,
             epochs=n_epochs,
             vf_clip=vf_clip,
+            mask_fill=mask_fill,
+            ratio_cap=ratio_cap,
         )
         history.append(metrics)
         # early stop checks
@@ -329,6 +484,8 @@ def main():
     torch.save(model.state_dict(), policy_path)
     opt_path = os.path.join(RUNS_DIR, f"ppo_optimizer_{ts}.pt")
     torch.save(optimizer.state_dict(), opt_path)
+    scaler_path = os.path.join(RUNS_DIR, f"ppo_scaler_{ts}.pt")
+    torch.save(scaler.state_dict(), scaler_path)
     stats = {
         "obs_dim": obs_dim,
         "logical_act_dim": LOGICAL_ACT_DIM,
@@ -351,6 +508,11 @@ def main():
         },
         "resumed": bool(resumed_flag),
         "timestamp": ts,
+        "scaler": {
+            "count": scaler.count,
+            "mean_sample": scaler.mean[:5].tolist(),
+            "var_sample": scaler.var[:5].tolist(),
+        },
     }
     stats_path = os.path.join(RUNS_DIR, f"ppo_stats_{ts}.json")
     with open(stats_path, "w") as f:

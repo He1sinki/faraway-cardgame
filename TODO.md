@@ -206,7 +206,10 @@ Objectif global: développer, entraîner et intégrer une IA capable de se conne
 - Condition: plateau winRate validation sur 3 eval consécutives.
 
 ### 6.6 Persist & reprise
-- Sauvegarder `optimizer_state`, `policy_state`, `scaler_state` (si normalisation).
+-- Sauvegarder `optimizer_state`, `policy_state`, `scaler_state` (si normalisation).
+  - Implémenté: fichiers `ppo_policy_<ts>.pt`, `ppo_optimizer_<ts>.pt`, `ppo_scaler_<ts>.pt` + stats json.
+  - Normalisation offline via `RunningMeanStd` (`rl/scaler.py`) et reprise lors d'un nouvel entraînement.
+  - Doc: `docs/persistence.md`.
 
 ### 6.7 Tests
 - Test unitaire advantage calc (comparer expected calcul manuel).

@@ -27,7 +27,16 @@ lr_schedule: none           # none | linear (linear decay sur updates)
 minibatch_size: 256         # override batch_size pour sous-lot (si différent)
 vf_clip_range: null         # si non null et vf_clip == null: clip absolu value delta (custom)
 early_stop: true            # Active arrêt anticipé
-target_kl: 0.1              # Seuil KL moyen approximatif au-delà duquel on arrête
+target_kl: 0.5              # Relâché pour debug cold run
 min_entropy: 0.05           # Entropie minimale acceptable avant arrêt (collapse)
 lr_kl_factor: 0.5           # Facteur réduction LR si KL dépasse target_kl (avant arrêt dur)
 patience_updates: 0         # Nombre d'updates supplémentaires autorisés après dépassement KL (0 = stop immédiat)
+
+# === Debug Cold Run (Phase 6.6 diagnostics) ===
+resume: false               # désactive reprise pour run à froid
+learning_rate: 0.0001       # LR réduite pour stabilité
+n_epochs: 1                 # une seule passe sur le buffer
+adv_clamp: 5                # clamp des avantages pour limiter ratios extrêmes
+mask_fill: -10000           # au lieu de -1e9 pour réduire instabilité softmax
+ratio_cap: 20               # clamp multiplicatif (debug) sur ratio PPO
+ignore_single_valid: true   # drop transitions avec une seule action légale
